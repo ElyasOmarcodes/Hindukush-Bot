@@ -28,6 +28,8 @@ from modules.utils import ensure_dirs, setup_logging
 logger = logging.getLogger("main")
 
 BOT_COMMANDS = [
+    BotCommand("on", "د پیغامونو غوږ نیول پیل کړه"),
+    BotCommand("off", "غوږ نیول ودروه (موقت)"),
     BotCommand("cmp", "پکیج بشپړ او پروسس کړه"),
     BotCommand("cnl", "روان عملیات لغوه کړه"),
     BotCommand("clean", "بفر پاک کړه"),
@@ -78,6 +80,8 @@ def build_application(config: Config) -> Application:
         logger.warning("TELEGRAM_GROUP_ID نه دی ټاکل شوی — ټول چټونه څارل کیږي (dev حالت)")
 
     # ---- دستورونه ----
+    app.add_handler(CommandHandler("on", commands.cmd_on, filters=chat_filter))
+    app.add_handler(CommandHandler("off", commands.cmd_off, filters=chat_filter))
     app.add_handler(CommandHandler("cmp", commands.cmd_cmp, filters=chat_filter))
     app.add_handler(CommandHandler("cnl", commands.cmd_cnl, filters=chat_filter))
     app.add_handler(CommandHandler("clean", commands.cmd_clean, filters=chat_filter))

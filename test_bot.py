@@ -102,6 +102,21 @@ def test_validate_ok():
     assert validate_package(state) == []
 
 
+def test_listening_off_by_default():
+    state = _state()
+    assert state.listening is False
+
+
+def test_reset_keeps_listening_flag():
+    state = _state()
+    state.listening = True
+    state.buffer.append(BufferItem(type="text", message_id=1, content="x"))
+    state.reset()
+    assert state.buffer == []
+    # /cmp دوره باید رباټ کاڼه نه کړي — listening باید پاتې شي.
+    assert state.listening is True
+
+
 def test_collect_texts_ordered():
     state = _state()
     state.buffer.append(BufferItem(type="text", message_id=1, content="A"))

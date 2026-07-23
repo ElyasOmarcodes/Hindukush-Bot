@@ -110,6 +110,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     state = _state(context)
 
+    # که رباټ غیر فعال وي، پیغامونه هیڅ مه نیسه (د /on تر مخه).
+    if not state.listening:
+        return
+
     # د پروسس پر مهال نوي توکي مه نیسه.
     if state.processing:
         logger.info("پروسس روان دی — پیغام #%d له پامه غورځول شو", msg.message_id)

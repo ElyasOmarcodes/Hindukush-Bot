@@ -39,6 +39,8 @@ def _is_authorized(state: BotState, update: Update) -> bool:
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.effective_message.reply_text(
         "🤖 د دستورونو لیست:\n\n"
+        "/on — د پیغامونو غوږ نیول پیل کړه\n"
+        "/off — غوږ نیول ودروه (موقت)\n"
         "/cmp — پکیج بشپړ او پروسس کړه\n"
         "/cnl — روان عملیات لغوه کړه\n"
         "/clean — بفر پاک کړه\n"
@@ -47,13 +49,45 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def cmd_on(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """رباټ فعال کړه چې د پیغامونو غوږ شي.  Start listening for messages."""
+    state = _state(context)
+    if not _is_authorized(state, update):
+        return
+    if state.listening:
+        await update.effective_message.reply_text("👂 رباټ دمخه فعال دی.")
+        return
+    state.listening = True
+    logger.info("غوږ نیول فعال شو (/on)")
+    await update.effective_message.reply_text(
+        "👂 فعال شوم — اوس د پیغامونو غوږ نیسم. محتوا ولیږئ."
+    )
+
+
+async def cmd_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """رباټ موقتاً غیر فعال کړه چې نور پیغامونو ته غوږ نشي.  Pause listening."""
+    state = _state(context)
+    if not _is_authorized(state, update):
+        return
+    if not state.listening:
+        await update.effective_message.reply_text("🔇 رباټ دمخه غیر فعال دی.")
+        return
+    state.listening = False
+    logger.info("غوږ نیول غیر فعال شو (/off)")
+    await update.effective_message.reply_text(
+        "🔇 غیر فعال شوم — نور پیغامونو ته غوږ نه یم. د بیا پیل لپاره /on ووهئ."
+    )
+
+
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     state = _state(context)
     imgs, txts = state.counts()
+    mode = "فعال 👂" if state.listening else "غیر فعال 🔇"
     if not state.buffer:
-        await update.effective_message.reply_text("📭 بفر خالي دی.")
+        await update.effective_message.reply_text(f"🎧 حالت: {mode}\n📭 بفر خالي دی.")
         return
-    lines = [f"📦 اوسنی بفر — {len(state.buffer)}/{state.config.max_items} توکي",
+    lines = [f"🎧 حالت: {mode}",
+             f"📦 اوسنی بفر — {len(state.buffer)}/{state.config.max_items} توکي",
              f"🖼 انځورونه: {imgs}   📝 متنونه: {txts}", ""]
     for i, item in enumerate(state.buffer, 1):
         if item.type == "text":
