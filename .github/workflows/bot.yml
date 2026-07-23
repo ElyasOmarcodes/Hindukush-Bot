@@ -2,9 +2,14 @@ name: Hindukush-Bot CI & Run
 
 on:
   push:
-    branches: ["**"]
-  pull_request:
   workflow_dispatch:
+
+# Only one bot run may be alive at a time. A new push cancels the previous
+# long-running bot job, so Telegram never sees two pollers at once (which
+# would cause a 409 "getUpdates conflict").
+concurrency:
+  group: hindukush-bot
+  cancel-in-progress: true
 
 jobs:
   test:
