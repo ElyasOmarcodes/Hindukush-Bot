@@ -55,9 +55,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Check that the token secret is configured
+      - name: Check that the required secrets are configured
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
         run: |
           if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
             echo "::error::TELEGRAM_BOT_TOKEN secret is not set."
@@ -65,17 +66,25 @@ jobs:
             exit 1
           fi
           echo "TELEGRAM_BOT_TOKEN secret is present."
+          if [ -z "$GEMINI_API_KEYS" ]; then
+            echo "::warning::GEMINI_API_KEYS secret is not set — /cmp analysis will fail until it is added."
+          else
+            echo "GEMINI_API_KEYS secret is present."
+          fi
 
-      - name: Run Hindukush-Bot (polling)
+      - name: Run NewsBot (polling)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_GROUP_ID: ${{ secrets.TELEGRAM_GROUP_ID }}
+          ADMIN_USER_IDS: ${{ secrets.ADMIN_USER_IDS }}
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
           PYTHONUNBUFFERED: "1"
         run: |
           echo "Starting bot. It will run until the job timeout is reached."
           # Run the bot for up to ~5h50m. `timeout` returns 124 when it stops
           # the process on time, which we treat as a successful, clean run.
           set +e
-          timeout 350m python -u bot.py
+          timeout 350m python -u main.py
           code=$?
           echo "Bot process exited with code ${code}."
           if [ "${code}" -eq 124 ]; then

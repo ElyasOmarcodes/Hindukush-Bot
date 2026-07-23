@@ -1,0 +1,25 @@
+{
+  "telegram": {
+    "bot_token": "",
+    "group_id": 0,
+    "admin_user_ids": [],
+    "packages_dir": "data/packages",
+    "pending_dir": "data/pending"
+  },
+  "gemini": {
+    "api_keys": [],
+    "primary_model": "gemini-2.5-flash",
+    "fallback_model": "gemini-2.0-flash-lite"
+  },
+  "package": {
+    "max_items": 4,
+    "max_images": 1,
+    "max_texts": 3
+  },
+  "reactions": {
+    "sequence": ["1️⃣", "2️⃣", "3️⃣", "4️⃣"],
+    "fallback": ["👍", "❤️", "🔥", "🎉"],
+    "reject": "❌",
+    "clean": "🗑"
+  }
+}

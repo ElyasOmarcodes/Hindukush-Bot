@@ -1,4 +1,12 @@
+# Python
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# Secrets — never commit
 .env
+
+# Runtime data
+data/packages/
+data/pending/
+logs/
