@@ -264,6 +264,10 @@ async def _render_designs(context, data: dict, news_image, pkg_dir: Path, state:
     loop = asyncio.get_running_loop()
     paths: list[Path] = []
     for lang in LANGS:
+        # یوازې هغه ژبې چې عنوان لري (راپور یې لیږل شوی) ډیزاین کیږي.
+        if not (data.get(lang["title_key"]) or "").strip():
+            logger.info("[%s] عنوان نشته — دا ژبه پریښودل شوه", lang["code"])
+            continue
         await prog.step(_LANG_STEP[lang["code"]])
         try:
             path = await loop.run_in_executor(

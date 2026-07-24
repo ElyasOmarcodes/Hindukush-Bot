@@ -27,8 +27,16 @@ PROMPT_TEMPLATE = """تاسو د یوې خبري ادارې مرستیال یا�
 3. ژبې: `text_ps` = د پښتو راپور لومړی پاراګراف، `text_fa` = فارسي، `text_en` = انګلیسي.
 4. که کومه ژبه نه وي ورکړل شوې، هغه ساحه خالي رشته "" پریږده.
 
-د موقعیت (location) ټاکل: د محتوا پر بنسټ یو وټاکه:
-"Afghanistan" | "Region" | "Middle East" | "World".
+د موقعیت (location) ټاکل — دا اصول **په ترتیب** سره پلي کړه، یو ارزښت راوباسه:
+1. که خبر کې افغانستان په هره بڼه ښکیل وي (یوازې، یا له بل هیواد سره یوځای)، یا خاص \
+د افغانستان په اړه وي → "Afghanistan".
+2. که نه، او خبر یوازې د افغانستان د پولې ګاونډیو هیوادونو (پاکستان، ایران، تاجیکستان، \
+ازبکستان، ترکمنستان، چین) په اړه وي → "Region". خو که له دې ګاونډیو سره یو غیر-سیمه‌ایز \
+هیواد هم ښکیل وي → "World".
+3. که نه، او خبر یوازې د منځني ختیځ هیوادونو (سعودي، امارات، قطر، کویټ، بحرین، عمان، یمن، \
+عراق، سوریه، لبنان، اردن، فلسطین، اسراییل، مصر، ترکیه) په اړه وي → "Middle East". خو که \
+له منځني ختیځ سره یو بل هیواد (سیمه یا نړۍ) هم ښکیل وي → "World".
+4. که نه → "World".
 
 یوازې JSON راوګرځوه، پرته له کوم markdown یا تشریح:
 {{
@@ -274,20 +282,72 @@ async def _cascade(prompt: str, config: Config) -> str:
 # د منبع ډیفالټ (rule 8) — کله چې هیڅ رسنۍ/ارګان ونه موندل شي.
 _DEFAULT_SOURCE = {"ps": "راپورونه", "fa": "گزارش‌ها", "en": "Reports"}
 
+_VALID_LOCATIONS = ("Afghanistan", "Region", "Middle East", "World")
 
-def _match_full_text(paragraph: str, texts: list[str]) -> str:
-    """د سرلیک پاراګراف د خام راپورونو سره ورته کړه، بشپړ متن راوګرځوه.
+# د پښتو ځانګړي توري چې فارسي یې نه کاروي — د ژبې پیژندنې لپاره.
+_PASHTO_MARKERS = "ښږڅځډړټڼ"
 
-    The source may be in the 2nd/3rd paragraph, so feed the full report — find
-    the raw text whose start matches this paragraph. Falls back to the paragraph.
-    """
-    key = re.sub(r"\s+", " ", paragraph.strip())[:40]
-    if not key:
-        return paragraph
+# د اصلي (main) کال د بیا-هڅې اعظمي شمیر — چې کومه ژبه بې سرلیکه پاتې نشي.
+_MAX_MAIN_ATTEMPTS = 3
+
+
+def detect_language(text: str) -> str | None:
+    """د متن ژبه په کوډ کې وپیژنه: en / ps / fa (یا None که تش وي)."""
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return None
+    if sum(1 for c in letters if c.isascii()) / len(letters) > 0.5:
+        return "en"
+    if any(c in _PASHTO_MARKERS for c in text):
+        return "ps"
+    return "fa"
+
+
+def first_paragraph(text: str) -> str:
+    """د راپور لومړی ناخالي لاین (سرلیک) — د fallback لپاره کټ مټ."""
+    for line in text.splitlines():
+        if line.strip():
+            return line.strip()
+    return text.strip()
+
+
+def map_reports(texts: list[str]) -> dict:
+    """هر راپور خپلې ژبې ته وټاکه — {lang: raw_text}. (یو راپور فی ژبه)."""
+    per: dict = {}
     for t in texts:
-        if key in re.sub(r"\s+", " ", t):
-            return t
-    return paragraph
+        t = t.strip()
+        if not t:
+            continue
+        lang = detect_language(t)
+        if lang and lang not in per:
+            per[lang] = t
+    return per
+
+
+def _normalize_location(value: str) -> str:
+    value = (value or "").strip()
+    return value if value in _VALID_LOCATIONS else "World"
+
+
+def verify_result(result: dict, per_lang: dict) -> list[str]:
+    """د نهایي کیدلو مخکې ټوله نتیجه یو ځل چک کړه؛ ستونزې راوګرځوه.
+
+    Final safety check before rendering: every language that had a report must
+    have a non-empty title and source, and the location must be valid.
+    """
+    problems: list[str] = []
+    for lang in per_lang:
+        if not (result.get(f"title_{lang}") or "").strip():
+            problems.append(f"{lang}: عنوان نشته")
+        if not (result.get(f"source_{lang}") or "").strip():
+            problems.append(f"{lang}: منبع نشته")
+    if result.get("location") not in _VALID_LOCATIONS:
+        problems.append(f"موقعیت ناسم: {result.get('location')}")
+    if problems:
+        logger.error("د تایید ستونزې: %s", "؛ ".join(problems))
+    else:
+        logger.info("تایید بریالی — ټول %d ژبې عنوان+منبع لري", len(per_lang))
+    return problems
 
 
 async def extract_source(text: str, config: Config) -> str:
@@ -302,40 +362,71 @@ async def extract_source(text: str, config: Config) -> str:
     return _clean_source(raw)
 
 
-async def analyze(texts: list[str], config: Config) -> dict:
-    """بشپړ تحلیل: سرلیک (کټ مټ) + موقعیت (اصلي کال) + سرچینه (اختصاصي پرامپټ).
+async def _main_extract(reports: list[str], expected: set, config: Config) -> dict:
+    """اصلي کال د سرلیکونو + موقعیت لپاره، د بیا-هڅې سره چې کومه ژبه ورکه نشي.
 
-    Two stages: the main call maps reports to languages and returns the verbatim
-    first paragraph + location; then the dedicated source prompt runs per
-    language on the FULL report (source may be in the 2nd/3rd paragraph). Empty
-    results fall back to the language default (رواپورونه/گزارش‌ها/Reports).
-    Source failures are non-fatal (title still renders).
+    Retry-and-merge: repeats the main call until every expected language has a
+    non-empty paragraph and a location, or attempts run out. Missing pieces are
+    filled from a later attempt (so a one-off omission is self-healing).
+    """
+    raw: dict = {}
+    for attempt in range(1, _MAX_MAIN_ATTEMPTS + 1):
+        try:
+            parsed = _parse_json(await _cascade(build_prompt(reports), config))
+        except Exception as err:  # noqa: BLE001
+            logger.warning("اصلي کال هڅه %d ناکام: %s", attempt, err)
+            parsed = {}
+        for lg in ("ps", "fa", "en"):
+            if not (raw.get(f"text_{lg}") or "").strip() and (parsed.get(f"text_{lg}") or "").strip():
+                raw[f"text_{lg}"] = parsed[f"text_{lg}"]
+        if not raw.get("location") and (parsed.get("location") or "").strip():
+            raw["location"] = parsed["location"]
+        done = all((raw.get(f"text_{lg}") or "").strip() for lg in expected) and raw.get("location")
+        if done:
+            break
+        if attempt < _MAX_MAIN_ATTEMPTS:
+            logger.warning("تایید: ځینې برخې ناقصې — بیا هڅه (%d/%d)", attempt, _MAX_MAIN_ATTEMPTS)
+    return raw
+
+
+async def analyze(texts: list[str], config: Config) -> dict:
+    """بشپړ، اطمیناني تحلیل — عنوان تل موجود، موقعیت سم، سرچینه معنوي.
+
+    Language is detected in code (reliable), so we always know which languages
+    to expect. The main call (with retry) provides verbatim titles + location;
+    any title the model still omits falls back to the report's first line, so a
+    title is **never** missing. Source uses the dedicated prompt. Finally
+    ``verify_result`` checks the whole result before it is returned.
     """
     if not config.gemini_api_keys:
         raise RuntimeError("د Gemini هیڅ کیلي نه ده تنظیم شوې (GEMINI_API_KEYS).")
 
-    # مرحله ۱ — سرلیکونه (کټ مټ پاراګراف) + موقعیت.
-    raw = _parse_json(await _cascade(build_prompt(texts), config))
-    result: dict = {"location": (raw.get("location") or "").strip()}
+    reports = [t.strip() for t in texts if t.strip()]
+    per_lang = map_reports(reports)  # {lang: raw_text}
+    expected = set(per_lang)
+
+    raw = await _main_extract(reports, expected, config)
+    result: dict = {"location": _normalize_location(raw.get("location", ""))}
 
     for lang in ("ps", "fa", "en"):
-        para = (raw.get(f"text_{lang}") or raw.get(f"title_{lang}") or "").strip()
-        # سرلیک = پاراګراف، د احتمالي «سرچینه:» مختاړي پرته.
-        _, title = _split_source_title(para)
-        result[f"title_{lang}"] = title
-        if not para:
+        if lang not in per_lang:
+            result[f"title_{lang}"] = ""
             result[f"source_{lang}"] = ""
             continue
-        # مرحله ۲ — سرچینه د بشپړ راپور څخه د اختصاصي پرامپټ له لارې.
-        full = _match_full_text(para, texts)
+        para = (raw.get(f"text_{lang}") or "").strip()
+        if not para:
+            # اطمیناني fallback — عنوان هیڅکله ورک نشي.
+            para = first_paragraph(per_lang[lang])
+            logger.warning("[%s] Gemini سرلیک ورنکړ — د کوډ لومړی لاین وکارول شو", lang)
+        _, title = _split_source_title(para)
+        result[f"title_{lang}"] = title
+        # سرچینه د بشپړ راپور څخه (اختصاصي پرامپټ) + د ژبې ډیفالټ که ونه موندل شي.
         try:
-            src = await extract_source(full, config)
-        except Exception as err:  # noqa: BLE001 - سرچینه اختیاري ده، pipeline مه دروه
+            src = await extract_source(per_lang[lang], config)
+        except Exception as err:  # noqa: BLE001 - سرچینه اختیاري ده
             logger.warning("[%s] د سرچینې استخراج ناکام: %s", lang, err)
             src = ""
-        # rule 8 — که سرچینه ونه موندل شوه، د ژبې ډیفالټ وکاروه.
         result[f"source_{lang}"] = src or _DEFAULT_SOURCE[lang]
 
+    verify_result(result, per_lang)
     return result
-
-    raise RuntimeError(f"ټول مډلونه/کیلیانې ناکام شول: {last_error}")

@@ -225,6 +225,43 @@ def test_default_source_per_language():
     assert gemini._DEFAULT_SOURCE == {"ps": "راپورونه", "fa": "گزارش‌ها", "en": "Reports"}
 
 
+def test_detect_language():
+    assert gemini.detect_language("This is English news") == "en"
+    assert gemini.detect_language("د افغانستان په اړه خبر دی ښه") == "ps"  # ښ pashto marker
+    assert gemini.detect_language("این یک خبر فارسی است") == "fa"
+    assert gemini.detect_language("123 456") is None
+
+
+def test_first_paragraph():
+    assert gemini.first_paragraph("سرلیک دلته\n\nمتن خبر") == "سرلیک دلته"
+    assert gemini.first_paragraph("\n\n  Headline  \nbody") == "Headline"
+
+
+def test_map_reports_one_per_language():
+    reports = ["This is English", "دا پښتو خبر دی ښکاره", "این خبر فارسی"]
+    per = gemini.map_reports(reports)
+    assert per["en"] == "This is English"
+    assert "ps" in per and "fa" in per
+
+
+def test_verify_result_flags_missing_title():
+    per = {"ps": "x", "en": "y"}
+    result = {"title_ps": "عنوان", "source_ps": "الجزیره", "title_en": "", "source_en": "Reuters", "location": "World"}
+    problems = gemini.verify_result(result, per)
+    assert any("en" in p and "عنوان" in p for p in problems)
+
+
+def test_verify_result_clean_passes():
+    per = {"ps": "x"}
+    result = {"title_ps": "عنوان", "source_ps": "الجزیره", "location": "Afghanistan"}
+    assert gemini.verify_result(result, per) == []
+
+
+def test_normalize_location_invalid_to_world():
+    assert gemini._normalize_location("Mars") == "World"
+    assert gemini._normalize_location("Afghanistan") == "Afghanistan"
+
+
 def test_source_prompt_has_new_rules():
     # د ۴ ګونو اصولو شتون: ارګان پر شخص، ډیفالټ راپورونه.
     assert "ORGANIZATION OVER PERSON" in gemini.SOURCE_PROMPT
