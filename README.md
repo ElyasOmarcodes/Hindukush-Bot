@@ -22,13 +22,25 @@ Hindukush-Bot/
 ├── .env.example            # د کیلیانو بیلګه (کاپي یې کړه → .env)
 ├── config/
 │   └── settings.json       # جوړښتي تنظیمات (بې پټو معلوماتو)
+├── assets/                 # ټمپلیټونه، فونټونه، د موقعیت PNGونه (فاز ۲)
+│   ├── templates/          # NewsEng.png, NewsPashtoPersian.png
+│   ├── fonts/              # FModam-FBlack / FRegular / FBold
+│   └── locations/          # En/Pa/Fa Location (۱۲ PNG)
 ├── modules/
-│   ├── config.py           # تنظیمات + د .env پټ معلومات
+│   ├── config.py           # تنظیمات + د .env پټ معلومات + DesignConfig
 │   ├── monitor.py          # څارنه + بفر + ری‌اکشن + البوم
-│   ├── commands.py         # /cmp /cnl /clean /status /help + pipeline
+│   ├── commands.py         # /on /off /cmp /cnl /clean /status /help + pipeline
 │   ├── package.py          # د پکیج جوړول/ساتل/اعتبار
 │   ├── gemini.py           # د Gemini تحلیل + cascade fallback
-│   └── utils.py            # فایل نوم، لاګ، Markdown escape
+│   ├── progress.py         # ژوندۍ کتنه (یو پیغام + edit)
+│   ├── utils.py            # فایل نوم، لاګ، Markdown escape
+│   └── design/             # فاز ۲ — Pillow رینډرنګ
+│       ├── render.py       # render_all/render_one — اصلي ننوتنه
+│       ├── canvas.py       # د خبر انځور + ټمپلیټ لایرونه
+│       ├── text_render.py  # RTL raqm shaping + عنوان + هایلایټ + منبع
+│       ├── location.py     # د موقعیت لایر
+│       ├── layout.py       # باکسونه + د موقعیت نقشه
+│       └── export.py       # JPEG فشارول + پاک فایل نوم
 └── data/                   # د پکیجونو فولډرونه (git ته نه ځي)
 ```
 
@@ -123,9 +135,21 @@ pytest -v
 1. `/on` ووهه → رباټ فعالیږي او د پیغامونو غوږ نیسي.
 2. په ګروپ کې ۱ انځور + تر ۳ متني راپورونه ولیږه → هر یو ری‌اکشن اخلي (1️⃣2️⃣3️⃣4️⃣).
 3. `/cmp` ولیکه → د خلاصې سره شیشه‌یي «✅ تایید / ❌ لغوه» بټن راځي.
-4. «تایید» کلیک کړه → پکیج ساتل کیږي، Gemini تحلیل کوي، پایله (متن + `result.json`) راځي.
+4. «تایید» کلیک کړه → پکیج ساتل کیږي، Gemini تحلیل کوي، بیا **درې ډیزاین شوي انځورونه**
+   (پښتو/فارسي/انګلیسي) جوړیږي او د **سند** په بڼه ګروپ ته لیږل کیږي. د کار پرمختګ
+   یو پیغام کې ژوندی ښکاري.
 5. رباټ پخپله reset کیږي — نوی پکیج ولیږه (لا هم فعال پاتې دی).
 6. کله چې بس کوې، `/off` ووهه → رباټ موقتاً غیر فعال کیږي.
+
+### فاز ۲ — ډیزاین (Pillow)
+
+د Gemini وروسته، `modules/design/` د دریو ژبو لپاره **1650×1650** انځورونه جوړوي:
+د خبر انځور (پورته-منځ) + ټمپلیټ + د موقعیت PNG + منبع + عنوان (وروستۍ ۴۵٪ برخه
+نارنجي هایلایټ). د پښتو/فارسي متن د **Pillow اصلي raqm shaping** (harfbuzz) په مټ
+سم وصل کیږي — د FModam فونټ سره دا حتمي دي (هغه presentation-forms نه لري). ټول
+ډیزاین عددونه د `config/settings.json` د `design` برخې څخه تنظیمیږي.
+
+اسیټونه په `assets/` کې دي (ټمپلیټونه، فونټونه، د موقعیت PNGونه) او په ریپو کې شامل دي.
 
 ---
 

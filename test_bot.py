@@ -148,3 +148,56 @@ def test_extract_json_with_fences():
 def test_extract_json_empty_raises():
     with pytest.raises(ValueError):
         gemini.extract_json("")
+
+
+# ---------- design ----------
+
+def test_parse_color_rrggbb():
+    from modules.design.text_render import parse_color
+    assert parse_color("FEA20E") == (254, 162, 14)
+    assert parse_color("#FFFFFF") == (255, 255, 255)
+
+
+def test_parse_color_argb_drops_alpha():
+    from modules.design.text_render import parse_color
+    assert parse_color("FFFEA20E") == (254, 162, 14)
+
+
+def test_normalize_location_defaults_to_world():
+    from modules.design.render import _normalize_location
+    assert _normalize_location("Afghanistan") == "Afghanistan"
+    assert _normalize_location("Mars") == "World"
+    assert _normalize_location("") == "World"
+
+
+def test_location_map_has_pashto_regin_typo():
+    from modules.design.layout import LOCATION_MAP
+    # د فایل ریښتینی نوم "Regin" دی، نه "Region".
+    assert LOCATION_MAP["ps"]["Region"].endswith("Pa Regin.png")
+
+
+def test_sanitize_removes_zwnj_and_isolates():
+    # ZWNJ (U+200C) + LRI (U+2066) باید پاک شي.
+    assert "‌" not in sanitize_filename("خبر‌⁦مهم")
+
+
+def test_render_all_produces_three_images(tmp_path):
+    from PIL import Image
+    from modules.design import render_all
+    photo = tmp_path / "news.jpg"
+    Image.new("RGB", (1200, 900), (40, 80, 120)).save(photo)
+    data = {
+        "title_ps": "د ازموینې سرلیک دلته دی",
+        "source_ps": "الجزیره:",
+        "title_fa": "عنوان آزمایشی اینجاست",
+        "source_fa": "الجزیره:",
+        "title_en": "A test headline goes here for the English card",
+        "source_en": "Reuters:",
+        "location": "Afghanistan",
+    }
+    cfg = load_config("config/settings.json")
+    paths = render_all(data, str(photo), tmp_path / "out", cfg)
+    assert len(paths) == 3
+    for p in paths:
+        assert p.exists()
+        assert Image.open(p).size == (1650, 1650)

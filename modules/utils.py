@@ -15,7 +15,11 @@ from pathlib import Path
 # پټ / کنټرول Unicode حروف چې د فایل نوم ماتوي (خاص د پښتو ZWNJ).
 # Hidden/control Unicode characters that break file names (notably the
 # Pashto/Persian ZWNJ). Removing them avoids "file not found" surprises.
-_HIDDEN_CHARS = "‌‍​‎‏﻿‪‫‬‭‮"
+_HIDDEN_CHARS = (
+    "‌‍​‎‏﻿"  # ZWNJ, ZWJ, ZWSP, LRM, RLM, BOM
+    "‪‫‬‭‮"          # embedding/override
+    "⁦⁧⁨⁩"                # isolates (LRI/RLI/FSI/PDI)
+)
 
 # هغه حروف چې د Markdown (v1) معنا لري او باید escape شي.
 _MARKDOWN_SPECIALS = r"_*[]()~`>#+-=|{}.!"

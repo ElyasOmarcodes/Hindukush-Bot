@@ -1,23 +1,30 @@
 """دستورونه او د پروسس pipeline.
 
-Slash commands (/cmp /cnl /clean /status /help), the /cmp inline confirmation
-keyboard, its callback, and the end-to-end processing pipeline (save →
-Gemini → send result → reset).
+Slash commands (/on /off /cmp /cnl /clean /status /help), the /cmp inline
+confirmation keyboard, its callback, and the end-to-end processing pipeline
+(save → Gemini → render 3 designs → send documents → reset).
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+from pathlib import Path
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaDocument, Update
 from telegram.ext import ContextTypes
 
 from . import gemini
+from .design import render as design_render
+from .design.layout import LANGS
 from .package import BotState, collect_texts, save_package, validate_package
-from .utils import escape_markdown
+from .progress import Progress
 
 logger = logging.getLogger("commands")
+
+# د هرې ژبې د پرمختګ ګام (د PROGRESS_STEPS index).
+_LANG_STEP = {"ps": 3, "fa": 4, "en": 5}
 
 
 def _state(context: ContextTypes.DEFAULT_TYPE) -> BotState:
@@ -163,43 +170,62 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await run_pipeline(context, q.message.chat_id)
 
 
+async def _render_designs(context, data: dict, news_image, pkg_dir: Path, state: BotState, prog: Progress) -> list[Path]:
+    """درې ژبې په executor کې جوړ کړه (CPU-bound → loop نه بلاکوي)."""
+    loop = asyncio.get_running_loop()
+    paths: list[Path] = []
+    for lang in LANGS:
+        await prog.step(_LANG_STEP[lang["code"]])
+        try:
+            path = await loop.run_in_executor(
+                None, design_render.render_one, lang, data, news_image, pkg_dir, state.config
+            )
+            paths.append(path)
+        except Exception as err:  # noqa: BLE001 - یوه ژبه نه باید نور ودروي
+            logger.error("[%s] د ډیزاین ناکامي: %s", lang["code"], err, exc_info=True)
+    return paths
+
+
+async def _send_designs(context, chat_id: int, paths: list[Path]) -> None:
+    """درې انځورونه د **سند** په بڼه ولیږه چې ټلګرام یې فشار نه کړي."""
+    media = [InputMediaDocument(media=open(p, "rb"), filename=p.name) for p in paths]
+    await context.bot.send_media_group(chat_id=chat_id, media=media)
+
+
 async def run_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
-    """بشپړ pipeline: ساتل → Gemini → پایله → reset."""
+    """بشپړ pipeline: ساتل → Gemini → ۳ ډیزاینه → د سند لیږل → reset."""
     state = _state(context)
     state.processing = True
+    prog = Progress(context.bot, chat_id, min_interval=state.config.design.progress_min_interval)
+    await prog.start()
     try:
+        await prog.step(0)  # پکیج ترلاسه شو
         pkg_dir = save_package(state)
+        texts = collect_texts(state)
         logger.info("پکیج خوندي شو → %s", pkg_dir)
 
-        texts = collect_texts(state)
+        await prog.step(1)  # جیمنای
         data = await gemini.analyze(texts, state.config)
-
-        # پایله د JSON فایل په بڼه وساته.
-        result_path = pkg_dir / "result.json"
-        result_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-        # ---- پایله د متن په بڼه (Markdown escape شوی) ----
-        loc = escape_markdown(data.get("location", ""))
-        result_text = (
-            "✅ *تحلیل بشپړ شو*\n\n"
-            f"🌍 موقعیت: `{loc}`\n\n"
-            f"🇦🇫 *پښتو*\nسرچینه: {escape_markdown(data.get('source_ps',''))}\n"
-            f"سرلیک: {escape_markdown(data.get('title_ps',''))}\n\n"
-            f"🇮🇷 *فارسي*\nسرچینه: {escape_markdown(data.get('source_fa',''))}\n"
-            f"سرلیک: {escape_markdown(data.get('title_fa',''))}\n\n"
-            f"🇬🇧 *English*\nSource: {escape_markdown(data.get('source_en',''))}\n"
-            f"Title: {escape_markdown(data.get('title_en',''))}"
+        (pkg_dir / "result.json").write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
-        await context.bot.send_message(chat_id, result_text, parse_mode="Markdown")
 
-        # ---- پایله د فایل په بڼه ----
-        with open(result_path, "rb") as fh:
-            await context.bot.send_document(
-                chat_id=chat_id, document=fh, filename="result.json",
-                caption="📄 د تحلیل پایله",
-            )
-        logger.info("پایله ګروپ ته ولیږل شوه")
+        await prog.step(2)  # د خبر انځور
+        news_img = pkg_dir / "image.jpg"
+        news_path = str(news_img) if news_img.exists() else None
+
+        paths = await _render_designs(context, data, news_path, pkg_dir, state, prog)
+        if not paths:
+            raise RuntimeError("هیڅ انځور جوړ نشو")
+
+        await prog.step(7)  # لیږل
+        await _send_designs(context, chat_id, paths)
+        logger.info("%d انځورونه ګروپ ته ولیږل شول", len(paths))
+        await prog.finish(ok=True)
+    except Exception as err:  # noqa: BLE001
+        logger.error("د pipeline خطا: %s", err, exc_info=True)
+        await prog.finish(ok=False, err=str(err))
     finally:
-        # د دورې وروسته بشپړ reset — حتی که خطا راشي.
+        # د دورې وروسته بشپړ reset — حتی که خطا راشي (listening نه بدلوي).
         state.reset()
         await context.bot.send_message(chat_id, "🔄 چمتو — نوی پکیج ولیږئ.")

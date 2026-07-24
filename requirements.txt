@@ -1,4 +1,6 @@
+# Pillow >= 10.4 manylinux wheels bundle raqm/harfbuzz/fribidi, which we use
+# for native RTL (Arabic-script) shaping — no arabic-reshaper needed.
 python-telegram-bot[all]>=21.0
 google-genai>=0.3.0
-Pillow>=10.0.0
+Pillow>=10.4.0
 python-dotenv>=1.0.0
