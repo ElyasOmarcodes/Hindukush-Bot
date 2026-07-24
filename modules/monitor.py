@@ -127,6 +127,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # ---- انځور (photo یا د image document) ----
     is_image_doc = bool(msg.document and (msg.document.mime_type or "").startswith("image/"))
     if msg.photo or is_image_doc:
+        # عاجل حالت یوازې متن مني — انځور رد کړه.
+        if state.mode == "urgent":
+            logger.info("عاجل حالت — انځور #%d رد شو", msg.message_id)
+            await react(context, msg.chat_id, msg.message_id, state.config.reaction_reject)
+            return
         mgid = msg.media_group_id
         if mgid is None:
             await _add_image(context, state, msg)

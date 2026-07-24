@@ -35,14 +35,15 @@ _LANG_STEP = {"ps": 3, "fa": 4, "en": 5}
 
 # ─────────────── د بوټ کیبورډ بټنې (منو) ───────────────
 # د دستورونو پر ځای ښکلې بټنې — چې غیر مسلکي کسان هم اسانه کار وکړي.
+# یادونه: ټلګرام د کیبورډ بټنو رنګ نه مني — نو د «سور» لپاره 🔴 ایموجي کاروو.
 BTN_CREATE = "🛠 جوړول"
 BTN_NEWS = "📰 خبر"
-BTN_URGENT = "🚨 عاجل"
+BTN_URGENT = "🔴 عاجل"
 BTN_QUOTE = "💬 نقل قول"
 BTN_BACK = "◀️ بیرته شاته"
 BTN_COMPLETE = "✅ بشپړول"
 BTN_CLEAN = "🗑 پاکول"
-BTN_CANCEL = "❌ لغوه"
+BTN_CANCEL = "🔴 لغوه"
 
 # ټول د بټنو لیبلونه — چې monitor یې د پکیج محتوا ونه ګڼي.
 BUTTON_LABELS = [
@@ -108,19 +109,31 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "یو انتخاب وکړئ:", reply_markup=create_keyboard()
         )
     elif text == BTN_NEWS:
+        state.reset()
+        state.mode = "news"
         state.listening = True
         logger.info("د خبر حالت فعال شو (بټن)")
         await update.effective_message.reply_text(
             "📰 د خبر حالت فعال شو — اوس انځور او متنونه ولیږئ، بیا «✅ بشپړول» ووهئ.",
             reply_markup=active_keyboard(),
         )
-    elif text in (BTN_URGENT, BTN_QUOTE):
+    elif text == BTN_URGENT:
+        state.reset()
+        state.mode = "urgent"
+        state.listening = True
+        logger.info("د عاجل حالت فعال شو (بټن)")
+        await update.effective_message.reply_text(
+            "🔴 د عاجل حالت فعال شو — یوازې تر ۳ متني راپورونه ولیږئ (بې انځوره)، بیا «✅ بشپړول» ووهئ.",
+            reply_markup=active_keyboard(),
+        )
+    elif text == BTN_QUOTE:
         await update.effective_message.reply_text(
             "⏳ دا برخه اوس غیر فعاله ده — راتلونکې کې به فعاله شي."
         )
     elif text == BTN_BACK:
         state.reset()
         state.listening = False
+        state.mode = "news"
         await update.effective_message.reply_text(
             "🏠 اصلي منو", reply_markup=main_keyboard()
         )
@@ -319,9 +332,11 @@ async def run_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None
         logger.error("د pipeline خطا: %s", err, exc_info=True)
         await prog.finish(ok=False, err=str(err))
     finally:
-        # د دورې وروسته بشپړ reset — حتی که خطا راشي (listening نه بدلوي).
+        # د دورې وروسته بشپړ reset او بیرته اصلي پاڼې (منو) ته ورګرځي.
         state.reset()
-        # فعال حالت منو بیا وښیه چې کاروونکی نوی پکیج پیل کولی شي.
+        state.listening = False
+        state.mode = "news"
         await context.bot.send_message(
-            chat_id, "🔄 چمتو — نوی پکیج ولیږئ.", reply_markup=active_keyboard()
+            chat_id, "✅ بشپړ شو — د نوي پکیج لپاره «🛠 جوړول» ووهئ.",
+            reply_markup=main_keyboard(),
         )

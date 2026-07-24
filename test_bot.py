@@ -278,6 +278,26 @@ def test_menu_keyboards_build():
     assert commands.active_keyboard().keyboard
 
 
+def test_design_line_gap_and_quality():
+    cfg = load_config("config/settings.json")
+    assert cfg.design.title_line_gap == 15
+    assert cfg.design.jpeg_quality_max == 96
+    assert cfg.design.jpeg_quality_min == 92
+
+
+def test_botstate_mode_default_news():
+    state = _state()
+    assert state.mode == "news"
+
+
+def test_reset_keeps_mode():
+    state = _state()
+    state.mode = "urgent"
+    state.reset()
+    # reset یوازې بفر پاکوي — mode د بټن له لارې بدلیږي.
+    assert state.mode == "urgent"
+
+
 def test_source_prompt_has_key_rules():
     # د کاروونکي اختصاصي پرامپټ باید بشپړ ضمیمه شي.
     assert "Nominative" in gemini.SOURCE_PROMPT

@@ -35,7 +35,8 @@ class DesignConfig:
     title_normal_max: int = 79
     title_extended_min: int = 58  # ⚠️ یوازې انګلیسي
     title_valign: str = "top"     # "top" | "middle"
-    line_spacing: float = 1.45
+    # د عنوان د لاینونو ترمنځ فاصله (px) — د فونټ طبیعي لوړوالي سربېره.
+    title_line_gap: int = 15
 
     source_size: int = 49
     source_min_size: int = 24
@@ -47,9 +48,10 @@ class DesignConfig:
     highlight_fraction: float = 0.45
     normal_color_hex: str = "FFFFFF"
 
-    jpeg_quality_max: int = 95
-    jpeg_quality_min: int = 82
-    target_kb: int = 950
+    # د خروجي کیفیت — نږدې بې-تاوانه (FullHD)، optimize + progressive حجم کموي.
+    jpeg_quality_max: int = 96
+    jpeg_quality_min: int = 92
+    target_kb: int = 1600
 
     progress_min_interval: float = 1.0
 

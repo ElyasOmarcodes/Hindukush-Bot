@@ -36,6 +36,8 @@ class BotState:
     # آیا رباټ اوس د پیغامونو غوږ نیسي؟ په default غیر فعال — د /on سره فعالیږي.
     # Whether the bot is currently listening. Off by default; /on enables it.
     listening: bool = False
+    # د کار حالت: "news" (۱ انځور + ۳ متن) یا "urgent" (فقط ۳ متن، بې انځور).
+    mode: str = "news"
     buffer: list[BufferItem] = field(default_factory=list)
     # د البوم برخو راټولول د media_group_id پر بنسټ.
     media_buffer: dict = field(default_factory=lambda: defaultdict(list))

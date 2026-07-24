@@ -48,8 +48,10 @@ def text_width(font: ImageFont.FreeTypeFont, text: str, is_english: bool) -> flo
     return font.getlength(text, direction=_direction(is_english))
 
 
-def line_height(size: int, spacing: float) -> int:
-    return int(size * spacing)
+def line_height(font: ImageFont.FreeTypeFont, gap: int) -> int:
+    """د لاین لوړوالی = د فونټ طبیعي لوړوالی (ascent+descent) + فاصله (px)."""
+    ascent, descent = font.getmetrics()
+    return ascent + descent + gap
 
 
 def wrap_text(text: str, font_path: str, size: int, max_w: int, is_english: bool) -> list[str]:
@@ -81,7 +83,8 @@ def find_best_size(text: str, font_path: str, box: tuple, is_english: bool, dcfg
     min_size = dcfg.title_extended_min if is_english else dcfg.title_normal_min
     for size in range(dcfg.title_target_size, min_size - 1, -1):
         lines = wrap_text(text, font_path, size, box_w, is_english)
-        if len(lines) * line_height(size, dcfg.line_spacing) <= box_h:
+        lh = line_height(get_font(font_path, size), dcfg.title_line_gap)
+        if len(lines) * lh <= box_h:
             return size, lines
     lines = wrap_text(text, font_path, min_size, box_w, is_english)
     logger.warning("عنوان په %dpx کې هم ونه ځایېد — %d کرښې", min_size, len(lines))
@@ -99,7 +102,7 @@ def draw_title(canvas, text: str, font_path: str, box: tuple, is_english: bool, 
     font = get_font(font_path, size)
     draw = ImageDraw.Draw(canvas)
     bx, by, bw, bh = box
-    lh = line_height(size, dcfg.line_spacing)
+    lh = line_height(font, dcfg.title_line_gap)
     direction = _direction(is_english)
     space_w = text_width(font, " ", is_english) or font.getlength(" ")
 

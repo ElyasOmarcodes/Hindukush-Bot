@@ -74,6 +74,10 @@ def render_all(data: dict, news_image_path, out_dir, cfg: Config, progress_cb=No
     """
     paths: list[Path] = []
     for lang in LANGS:
+        # یوازې هغه ژبې چې عنوان لري ډیزاین کیږي.
+        if not (data.get(lang["title_key"]) or "").strip():
+            logger.info("[%s] عنوان نشته — دا ژبه پریښودل شوه", lang["code"])
+            continue
         try:
             if progress_cb is not None:
                 progress_cb(lang["code"])

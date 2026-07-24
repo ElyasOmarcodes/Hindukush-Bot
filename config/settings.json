@@ -45,7 +45,7 @@
     "title_normal_max": 79,
     "title_extended_min": 58,
     "title_valign": "top",
-    "line_spacing": 1.45,
+    "title_line_gap": 15,
 
     "source_size": 49,
     "source_min_size": 24,
@@ -56,9 +56,9 @@
     "highlight_fraction": 0.45,
     "normal_color_hex": "FFFFFF",
 
-    "jpeg_quality_max": 95,
-    "jpeg_quality_min": 82,
-    "target_kb": 950,
+    "jpeg_quality_max": 96,
+    "jpeg_quality_min": 92,
+    "target_kb": 1600,
 
     "progress_min_interval": 1.0
   }
