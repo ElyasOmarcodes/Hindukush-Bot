@@ -39,6 +39,8 @@ class DesignConfig:
 
     source_size: int = 35
     source_min_size: int = 24
+    # د سرچینې وروسته نښه (لکه «:»)؛ تش "" یې بندوي.
+    source_suffix: str = ":"
 
     highlight_color_hex: str = "FEA20E"
     highlight_fraction: float = 0.45

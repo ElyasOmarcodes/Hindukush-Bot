@@ -54,6 +54,69 @@ _EXPECTED_KEYS = (
 _COLON_SEPS = (":", "：", "﹕")
 _OTHER_SEPS = ("|", "｜", " - ", " – ", " — ")
 
+# د کاروونکي اختصاصي، تجربه شوی پرامپټ د سرچینې د معنوي استخراج لپاره.
+# The user's proven source-extraction prompt (do not paraphrase — used verbatim).
+SOURCE_PROMPT = """Role: Professional Media Analyst & Expert Pashto Linguist.
+Task: Extract the **Official News Source Entity** from the provided text.
+
+--- CORE OBJECTIVE ---
+Identify the organization, agency, or official body responsible for the news report. The output must be the "Nominative" (Standard/Dictionary) name of the entity in the original language (Pashto/Persian/English).
+
+--- STRICT LINGUISTIC RULES (PASHTO SPECIFIC) ---
+
+1. RULE: GRAMMAR CORRECTION (OBLIQUE TO NOMINATIVE)
+   Pashto nouns change form when followed by prepositions/postpositions. You MUST revert them to their original Dictionary Name.
+   - IF input is "نړيوالو رسنيو" (Oblique) -> OUTPUT: "نړيوالې رسنۍ" (Nominative).
+   - IF input is "ازبکستاني چارواکو" -> OUTPUT: "ازبکستاني چارواکي".
+   - IF input is "الجزیرې" (ending in ې due to context) -> OUTPUT: "الجزیره" (ending in ه).
+
+2. RULE: HANDLING THE PARTICLE "د" (THE/OF)
+   - KEEP "د" if it is part of an Official Title (Ministries, Directorates).
+     * Correct: "د ملي دفاع وزارت" (Ministry of Defense).
+     * Correct: "د ریاست‌الوزراء اقتصادي معاونیت".
+   - REMOVE "د" if it indicates mere possession or reporting.
+     * Wrong: "د رویټرز" -> Correct: "رویټرز".
+     * Wrong: "د طلوع نیوز" -> Correct: "طلوع نیوز".
+
+3. RULE: HIERARCHY & LOCATION CONTEXT
+   - Do NOT amputate parent organizations if the child entity is generic.
+     * Input: "د ریاست‌الوزراء اقتصادي مرستیال" -> Output: "د ریاست‌الوزراء اقتصادي معاونیت" (Not just "اقتصادي معاونیت").
+   - KEEP Location for Embassies/Missions.
+     * Input: "په قطر کې د افغانستان سفارت" -> Output: "قطر کې د افغانستان سفارت" (Because "Afghanistan Embassy" alone is ambiguous).
+
+4. RULE: CLEAN EXTRACTION
+   - Remove reporting verbs: "ویلي دي", "راپور ورکړ", "زیاته کړې".
+   - Remove prepositions: "له قوله", "د ... پر بنسټ", "According to".
+
+--- FEW-SHOT EXAMPLES (LEARN FROM THESE PATTERNS) ---
+
+Input: "نړيوالو رسنيو د ملګرو ملتونو له قوله ويلي چې مرستې بندېږي."
+Output: نړيوالې رسنۍ
+
+Input: "د ازبکستان د احصایې ملي ادارې په خپل تازه راپور کې ویلي."
+Output: د ازبکستان د احصایې ملي اداره
+
+Input: "په قطر کې د افغانستان سفارت سرپرست له چینایي استازي سره وکتل."
+Output: قطر کې د افغانستان سفارت
+
+Input: "د ملي دفاع وزارت د ستراتیژۍ مرستیال روسیې ته لاړ."
+Output: د ملي دفاع وزارت
+
+Input: "الحزیرې خبر ورکړی چې په کانګو کې پېښه شوې."
+Output: الجزیره
+
+Input: "د سرې میاشتې ټولنې مشرتابه ویلي."
+Output: د سرې میاشتې ټولنه
+
+Input: "باختر آژانس خبر ورکوي."
+Output: باختر آژانس
+
+--- END OF INSTRUCTIONS ---
+
+Now, extract the source from the following text:
+
+"""
+
 
 def build_prompt(texts: list[str]) -> str:
     """د راپورونو لیست د تحلیل پرامپټ ته واړوه.  Build the analysis prompt."""
@@ -68,18 +131,20 @@ def extract_json(text: str) -> dict:
     split each verbatim paragraph into source + title. Supports both the new
     ``text_*`` shape and the older ``title_*``/``source_*`` shape.
     """
+    return build_result(_parse_json(text))
+
+
+def _parse_json(text: str) -> dict:
+    """د خام ځواب څخه JSON دیکشنري راوباسه (د ```json حصار زغم سره)."""
     if not text:
         raise ValueError("د Gemini ځواب خالي دی")
     cleaned = text.strip()
-    # د markdown کوډ-حصار لرې کول.
     cleaned = re.sub(r"^```(?:json)?", "", cleaned).strip()
     cleaned = re.sub(r"```$", "", cleaned).strip()
-    # لومړی { … وروستی } راواخله.
     start, end = cleaned.find("{"), cleaned.rfind("}")
     if start != -1 and end != -1 and end > start:
         cleaned = cleaned[start : end + 1]
-    data = json.loads(cleaned)
-    return build_result(data)
+    return json.loads(cleaned)
 
 
 def build_result(data: dict) -> dict:
@@ -138,13 +203,22 @@ def _is_quota(err: Exception) -> bool:
     ))
 
 
-async def analyze(texts: list[str], config: Config) -> dict:
-    """راپورونه Gemini ته واستوه — د قوت پر بنسټ cascade.
+def _clean_source(raw: str) -> str:
+    """د سرچینې د پرامپټ ځواب پاک کړه — لومړۍ کرښه، د quotes/Output: پرته."""
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    s = s.splitlines()[0].strip()
+    s = re.sub(r"^(Output|Source|Answer|منبع|سرچینه)\s*[:：]\s*", "", s, flags=re.I).strip()
+    return s.strip("\"'`«»").strip()
 
-    Cascade order (spec): strongest model first. For each model try key #1 then
-    key #2 (…), then drop to the next model. Any failure — quota or otherwise —
-    silently advances to the next (model, key) pair; only if *every* pair fails
-    do we raise. This keeps fallback invisible to the user.
+
+async def _cascade(prompt: str, config: Config) -> str:
+    """یو پرامپټ د قوت پر بنسټ cascade سره واستوه؛ خام متن راوګرځوه.
+
+    Model-major, key-minor cascade: strongest model first, key #1 then #2 …,
+    then the next model. Any failure (quota or otherwise) advances silently;
+    raises only if every (model, key) pair fails.
     """
     if not config.gemini_api_keys:
         raise RuntimeError("د Gemini هیڅ کیلي نه ده تنظیم شوې (GEMINI_API_KEYS).")
@@ -152,23 +226,67 @@ async def analyze(texts: list[str], config: Config) -> dict:
     # وارد کول دلته کوو چې د یونټ-ټیسټ پر مهال google-genai ته اړتیا نه وي.
     from google import genai
 
-    prompt = build_prompt(texts)
     clients = [(i + 1, genai.Client(api_key=k)) for i, k in enumerate(config.gemini_api_keys)]
     last_error: Exception | None = None
 
-    # بهرنۍ حلقه = مډل (له قوي څخه ضعیف)، دنننۍ حلقه = کیلي.
     for model in config.gemini_models:
         for key_idx, client in clients:
             try:
-                logger.info("Gemini هڅه: %s / کیلي #%d", model, key_idx)
                 resp = await client.aio.models.generate_content(model=model, contents=prompt)
-                data = extract_json(resp.text)
-                logger.info("Gemini بریالی: %s / کیلي #%d", model, key_idx)
-                return data
+                if resp.text and resp.text.strip():
+                    logger.info("Gemini بریالی: %s / کیلي #%d", model, key_idx)
+                    return resp.text
+                raise RuntimeError("خالي ځواب")
             except Exception as err:  # noqa: BLE001 - cascade په قصد پراخ دی
                 last_error = err
                 reason = "کوټه/لیمیټ" if _is_quota(err) else "خطا"
                 logger.warning("Gemini %s (%s / کیلي #%d): %s — بل ته ځم", reason, model, key_idx, err)
                 continue
+
+    raise RuntimeError(f"ټول مډلونه/کیلیانې ناکام شول: {last_error}")
+
+
+async def extract_source(text: str, config: Config) -> str:
+    """د کاروونکي اختصاصي پرامپټ په مرسته د یوه راپور سرچینه راوباسه.
+
+    Runs the dedicated (proven) source prompt through the same cascade and
+    returns the normalized source entity, or "" on failure/empty.
+    """
+    if not text.strip():
+        return ""
+    raw = await _cascade(SOURCE_PROMPT + text.strip(), config)
+    return _clean_source(raw)
+
+
+async def analyze(texts: list[str], config: Config) -> dict:
+    """بشپړ تحلیل: سرلیک (کټ مټ) + موقعیت (اصلي کال) + سرچینه (اختصاصي پرامپټ).
+
+    Two stages: the main call maps reports to languages and returns the verbatim
+    first paragraph + location; then the dedicated source prompt runs per
+    language. Source failures are non-fatal (title still renders).
+    """
+    if not config.gemini_api_keys:
+        raise RuntimeError("د Gemini هیڅ کیلي نه ده تنظیم شوې (GEMINI_API_KEYS).")
+
+    # مرحله ۱ — سرلیکونه (کټ مټ پاراګراف) + موقعیت.
+    raw = _parse_json(await _cascade(build_prompt(texts), config))
+    result: dict = {"location": (raw.get("location") or "").strip()}
+
+    for lang in ("ps", "fa", "en"):
+        para = (raw.get(f"text_{lang}") or raw.get(f"title_{lang}") or "").strip()
+        # سرلیک = پاراګراف، د احتمالي «سرچینه:» مختاړي پرته.
+        _, title = _split_source_title(para)
+        result[f"title_{lang}"] = title
+        # مرحله ۲ — سرچینه د اختصاصي پرامپټ له لارې (که پاراګراف تش نه وي).
+        if para:
+            try:
+                result[f"source_{lang}"] = await extract_source(para, config)
+            except Exception as err:  # noqa: BLE001 - سرچینه اختیاري ده، pipeline مه دروه
+                logger.warning("[%s] د سرچینې استخراج ناکام: %s", lang, err)
+                result[f"source_{lang}"] = ""
+        else:
+            result[f"source_{lang}"] = ""
+
+    return result
 
     raise RuntimeError(f"ټول مډلونه/کیلیانې ناکام شول: {last_error}")

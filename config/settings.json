@@ -49,6 +49,7 @@
 
     "source_size": 35,
     "source_min_size": 24,
+    "source_suffix": ":",
 
     "highlight_color_hex": "FEA20E",
     "highlight_fraction": 0.45,

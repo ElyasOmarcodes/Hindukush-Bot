@@ -193,6 +193,20 @@ def test_split_source_pipe_separator():
     assert title == "Breaking news today"
 
 
+def test_clean_source_strips_labels_and_quotes():
+    assert gemini._clean_source("Output: الجزیره") == "الجزیره"
+    assert gemini._clean_source('"رویټرز"\nextra line') == "رویټرز"
+    assert gemini._clean_source("  باختر آژانس  ") == "باختر آژانس"
+    assert gemini._clean_source("") == ""
+
+
+def test_source_prompt_has_key_rules():
+    # د کاروونکي اختصاصي پرامپټ باید بشپړ ضمیمه شي.
+    assert "Nominative" in gemini.SOURCE_PROMPT
+    assert "نړيوالې رسنۍ" in gemini.SOURCE_PROMPT
+    assert gemini.SOURCE_PROMPT.rstrip().endswith("following text:")
+
+
 def test_gemini_models_uses_ordered_list(tmp_path):
     settings = tmp_path / "s.json"
     settings.write_text('{"gemini": {"models": ["m-strong", "m-mid", "m-weak"]}}', encoding="utf-8")

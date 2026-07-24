@@ -52,6 +52,9 @@ def render_one(lang: dict, data: dict, news_image_path, out_dir, cfg: Config) ->
     else:
         logger.warning("[%s] عنوان خالي — پریښودل شو", lang["code"])
     if source:
+        # د سرچینې وروسته نښه (لکه «:») ور اضافه کړه که دمخه یې نه لري.
+        if dcfg.source_suffix and not source.endswith(dcfg.source_suffix):
+            source = source + dcfg.source_suffix
         draw_source(canvas, source, source_font, lang["source_box"], lang["is_english"], dcfg)
     else:
         logger.warning("[%s] منبع خالي — پریښودل شوه", lang["code"])
