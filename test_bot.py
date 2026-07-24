@@ -174,6 +174,25 @@ def test_ensure_sources_ignores_midsentence_colon():
     assert out["title_en"] == long_title
 
 
+def test_extract_json_text_format_splits_source():
+    # نوی فارمټ: Gemini بشپړ پاراګراف (د سرچینې سره) راوباسي، کوډ یې بیلوي.
+    data = gemini.extract_json('{"text_ps": "الجزیره: بمبار پیښه وشوه", "location": "World"}')
+    assert data["source_ps"] == "الجزیره:"
+    assert data["title_ps"] == "بمبار پیښه وشوه"
+
+
+def test_extract_json_text_without_source():
+    data = gemini.extract_json('{"text_en": "A headline with no source prefix", "location": "World"}')
+    assert data["source_en"] == ""
+    assert data["title_en"] == "A headline with no source prefix"
+
+
+def test_split_source_pipe_separator():
+    src, title = gemini._split_source_title("BBC | Breaking news today")
+    assert src == "BBC"
+    assert title == "Breaking news today"
+
+
 def test_gemini_models_uses_ordered_list(tmp_path):
     settings = tmp_path / "s.json"
     settings.write_text('{"gemini": {"models": ["m-strong", "m-mid", "m-weak"]}}', encoding="utf-8")

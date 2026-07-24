@@ -15,27 +15,26 @@ from .config import Config
 
 logger = logging.getLogger("gemini")
 
-# د تحلیل لارښود — قواعد ۱۰۰٪ قلف دي (سرلیک کټ مټ کاپي).
-PROMPT_TEMPLATE = """تاسو د یوې خبري ادارې تحلیلګر یاست. لاندې راپورونه درکړل شوي دي \
-(کیدای شي پښتو، فارسي او انګلیسي وي). د هر یوه لپاره سرلیک او سرچینه راوباسئ.
+# د تحلیل لارښود — Gemini یوازې کټ مټ پاراګراف راوباسي؛ بیلول په کوډ کې کیږي.
+PROMPT_TEMPLATE = """تاسو د یوې خبري ادارې مرستیال یاست. لاندې تر دریو راپورونه درکړل \
+شوي دي (کیدای شي پښتو، فارسي او انګلیسي وي).
 
-⚠️ د سرلیک قواعد (۱۰۰٪ قلف):
-1. سرلیک تل د راپور لومړی پاراګراف دی.
-2. سرلیک باید VERBATIM (کټ مټ) کاپي شي — هیڅ بدلون، هیڅ لنډول، هیڅ بیا لیکل.
-3. استثنا: که په لومړي پاراګراف کې د «:» نښه وي، نو تر «:» مخکې برخه = سرچینه، \
-تر «:» وروسته برخه = سرلیک.
-   بېلګه: "الجزیره: بمبار پیښه وشوه" → source = "الجزیره:"، title = "بمبار پیښه وشوه".
-4. که «:» نه وي، ټول لومړی پاراګراف = سرلیک، سرچینه = خالي رشته.
-5. که کوم ژبنی راپور نه وي ورکړل شوی، د هغې ژبې سرلیک او سرچینه خالي رشته "" کړه.
+⚠️ ستا دنده (۱۰۰٪ قلف):
+1. د هر راپور **لومړی پاراګراف** (سرلیک) **کټ مټ (VERBATIM)** راوباسه — هیڅ بدلون، هیڅ \
+لنډول، هیڅ بیا لیکل، هیڅ ژباړه.
+2. ⚠️ **ډیر مهم:** که د پاراګراف په پیل کې د سرچینې نوم وي (لکه «الجزیره:» یا «BBC:»)، \
+هغه **هرومرو ورسره ونیسه** — مه یې غورځوه او مه یې جلا کوه. زه به یې پخپله بیل کړم.
+3. ژبې: `text_ps` = د پښتو راپور لومړی پاراګراف، `text_fa` = فارسي، `text_en` = انګلیسي.
+4. که کومه ژبه نه وي ورکړل شوې، هغه ساحه خالي رشته "" پریږده.
 
 د موقعیت (location) ټاکل: د محتوا پر بنسټ یو وټاکه:
 "Afghanistan" | "Region" | "Middle East" | "World".
 
 یوازې JSON راوګرځوه، پرته له کوم markdown یا تشریح:
 {{
-  "title_ps": "...", "source_ps": "...",
-  "title_fa": "...", "source_fa": "...",
-  "title_en": "...", "source_en": "...",
+  "text_ps": "...",
+  "text_fa": "...",
+  "text_en": "...",
   "location": "Middle East"
 }}
 
@@ -43,10 +42,17 @@ PROMPT_TEMPLATE = """تاسو د یوې خبري ادارې تحلیلګر یا�
 {reports}
 """
 
+# د پارس کولو تمه شوې خامې کیلیانې (له Gemini).
+_RAW_KEYS = ("text_ps", "text_fa", "text_en", "location")
+# د render لخوا کارول شوې وروستۍ کیلیانې.
 _EXPECTED_KEYS = (
     "title_ps", "source_ps", "title_fa", "source_fa",
     "title_en", "source_en", "location",
 )
+
+# د سرچینې بیلونکي نښې — colon ډولونه + پایپ + فاصله-ډش.
+_COLON_SEPS = (":", "：", "﹕")
+_OTHER_SEPS = ("|", "｜", " - ", " – ", " — ")
 
 
 def build_prompt(texts: list[str]) -> str:
@@ -56,10 +62,11 @@ def build_prompt(texts: list[str]) -> str:
 
 
 def extract_json(text: str) -> dict:
-    """د Gemini د ځواب څخه JSON راوباسه، حتی که ```json حصار ولري.
+    """د Gemini د ځواب څخه JSON راوباسه، بیا سرچینه/سرلیک په کوډ کې بیل کړه.
 
-    Extract the JSON object from a model reply, tolerating ```json fences and
-    surrounding prose. Missing keys are filled with empty strings.
+    Parse the model reply (tolerating ```json fences), then deterministically
+    split each verbatim paragraph into source + title. Supports both the new
+    ``text_*`` shape and the older ``title_*``/``source_*`` shape.
     """
     if not text:
         raise ValueError("د Gemini ځواب خالي دی")
@@ -72,47 +79,55 @@ def extract_json(text: str) -> dict:
     if start != -1 and end != -1 and end > start:
         cleaned = cleaned[start : end + 1]
     data = json.loads(cleaned)
-    # ډاډ ترلاسه کړه چې ټولې تمه شوې کیلیانې شته.
-    for key in _EXPECTED_KEYS:
-        data.setdefault(key, "")
-    # د سرچینې د بیلولو خوندي شبکه (که Gemini یې نه وي بیله کړې).
-    return ensure_sources(data)
+    return build_result(data)
 
 
-def _split_source_title(title: str) -> tuple[str, str]:
-    """که سرلیک د پیل نږدې «:» ولري، (سرچینه, سرلیک) بیل کړه؛ نه‌نو ("", سرلیک).
+def build_result(data: dict) -> dict:
+    """خامه Gemini پایله د render لپاره {title_*, source_*, location} ته واړوه."""
+    result: dict = {"location": (data.get("location") or "").strip()}
+    for lang in ("ps", "fa", "en"):
+        # نوی فارمټ (text_*) یا زوړ (title_*) — پاراګراف واخله.
+        para = (data.get(f"text_{lang}") or data.get(f"title_{lang}") or "").strip()
+        src, title = _split_source_title(para)
+        # که Gemini پخپله جلا سرچینه ورکړې وه او پاراګراف کې «:» نه و.
+        existing_src = (data.get(f"source_{lang}") or "").strip()
+        if not src and existing_src:
+            src, title = existing_src, para
+        result[f"source_{lang}"] = src
+        result[f"title_{lang}"] = title
+    return result
 
-    Split "الجزیره: خبر" into ("الجزیره:", "خبر"). Only splits when the colon is
-    near the start (a source is short), so mid-sentence colons are untouched.
+
+def _split_source_title(text: str) -> tuple[str, str]:
+    """که د پیل نږدې د سرچینې بیلونکی وي، (سرچینه, سرلیک) بیل کړه؛ نه‌نو ("", متن).
+
+    Split "الجزیره: خبر" → ("الجزیره:", "خبر"). Handles colon (kept in source),
+    plus pipe and spaced-dash separators (dropped). Only near the start (≤40
+    chars) so mid-sentence punctuation is untouched.
     """
-    positions = [p for p in (title.find(":"), title.find("：")) if p != -1]
-    if not positions:
-        return "", title
-    idx = min(positions)
-    if idx == 0 or idx > 40:  # colon د پیل کې یا ډیر لرې → سرچینه نه ده
-        return "", title
-    source = title[: idx + 1].strip()
-    rest = title[idx + 1 :].strip()
-    if not rest:  # colon په پای کې — سرچینه نه ده
-        return "", title
+    if not text:
+        return "", text
+    best_idx = -1
+    best_sep = ""
+    for sep in _COLON_SEPS + _OTHER_SEPS:
+        i = text.find(sep)
+        if 0 < i <= 40 and (best_idx == -1 or i < best_idx):
+            best_idx, best_sep = i, sep
+    if best_idx == -1:
+        return "", text
+    if best_sep in _COLON_SEPS:  # colon په سرچینه کې ساتل کیږي
+        source = text[: best_idx + len(best_sep)].strip()
+    else:  # پایپ/ډش لرې کیږي
+        source = text[:best_idx].strip()
+    rest = text[best_idx + len(best_sep) :].strip()
+    if not rest or not source:
+        return "", text
     return source, rest
 
 
 def ensure_sources(data: dict) -> dict:
-    """د هرې ژبې لپاره: که سرچینه خالي وي خو سرلیک «:» ولري، په کوډ کې یې بیل کړه.
-
-    Guarantees the source appears whenever the title carries a "source:" prefix,
-    even if the model left ``source_*`` empty (spec §6 rule 3).
-    """
-    for lang in ("ps", "fa", "en"):
-        src = (data.get(f"source_{lang}") or "").strip()
-        title = (data.get(f"title_{lang}") or "").strip()
-        if not src and title:
-            new_src, new_title = _split_source_title(title)
-            if new_src:
-                data[f"source_{lang}"] = new_src
-                data[f"title_{lang}"] = new_title
-    return data
+    """د زاړه فارمټ (title_*/source_*) لپاره د سرچینې بیلولو خوندي شبکه."""
+    return build_result(data)
 
 
 def _is_quota(err: Exception) -> bool:
