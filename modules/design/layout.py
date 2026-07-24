@@ -9,17 +9,17 @@ from __future__ import annotations
 
 # باکس = (left, top, width, height) — تل left/top/width/height (نه right/bottom).
 # د پښتو + فارسي باکسونه یو شان دي.
-# د منبع باکس ~۱۵px پورته خوا ته نقل شو (top: 980 → 965).
+# د منبع باکس ~۲۰px پورته خوا ته نقل شو (top: 980 → 960).
 _TITLE_BOX_RTL = (202, 1086, 1176, 421)
-_SOURCE_BOX_RTL = (439, 965, 817, 104)
+_SOURCE_BOX_RTL = (439, 960, 817, 104)
 _TITLE_BOX_EN = (267, 1086, 1218, 421)
-_SOURCE_BOX_EN = (380, 965, 864, 104)
+_SOURCE_BOX_EN = (380, 960, 864, 104)
 
 # درې ژبې — پښتو/فارسي یو ټمپلیټ او یو باکس شریکوي.
 LANGS = [
     {
         "code": "ps",
-        "template": "NewsPashtoPersian.png",
+        "template": "news_pa.png",
         "title_key": "title_ps",
         "source_key": "source_ps",
         "is_english": False,
@@ -28,7 +28,7 @@ LANGS = [
     },
     {
         "code": "fa",
-        "template": "NewsPashtoPersian.png",
+        "template": "news_fa.png",
         "title_key": "title_fa",
         "source_key": "source_fa",
         "is_english": False,
@@ -37,7 +37,7 @@ LANGS = [
     },
     {
         "code": "en",
-        "template": "NewsEng.png",
+        "template": "news_en.png",
         "title_key": "title_en",
         "source_key": "source_en",
         "is_english": True,

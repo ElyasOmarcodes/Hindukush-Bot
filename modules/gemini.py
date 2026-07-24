@@ -111,6 +111,31 @@ Output: د سرې میاشتې ټولنه
 Input: "باختر آژانس خبر ورکوي."
 Output: باختر آژانس
 
+--- ADDITIONAL RULES (SOURCE LOCATION & FALLBACK) ---
+
+5. RULE: WHERE THE SOURCE APPEARS (SEARCH THE WHOLE TEXT)
+   The source is not always in the first line. It is most often at the start of
+   the FIRST line or the SECOND paragraph, and is sometimes moved to the THIRD
+   paragraph. Read the entire text before deciding — do not stop at line one.
+
+6. RULE: SOURCE INSIDE THE HEADLINE
+   Sometimes the first paragraph (the headline) begins with the source, separated
+   from the rest by a ":" character. Example: "الجزیره: خبر...". Here "الجزیره"
+   is the source.
+
+7. RULE: ORGANIZATION OVER PERSON (STRICT)
+   If the text contains BOTH a person's name AND a media outlet / organization /
+   group name (e.g. الجزیره, رویټرز, باختر آژانس), you MUST choose the
+   media/organization/group. In ~99% of cases the source is an outlet, an
+   organization, or a group — NEVER a person's personal name.
+
+8. RULE: FALLBACK WHEN NO SOURCE EXISTS
+   If NO media outlet / organization / movement is explicitly named as the origin
+   of the report, output the default word for the input language:
+   - Pashto  -> راپورونه
+   - Persian -> گزارش‌ها
+   - English -> Reports
+
 --- END OF INSTRUCTIONS ---
 
 Now, extract the source from the following text:
@@ -246,6 +271,25 @@ async def _cascade(prompt: str, config: Config) -> str:
     raise RuntimeError(f"ټول مډلونه/کیلیانې ناکام شول: {last_error}")
 
 
+# د منبع ډیفالټ (rule 8) — کله چې هیڅ رسنۍ/ارګان ونه موندل شي.
+_DEFAULT_SOURCE = {"ps": "راپورونه", "fa": "گزارش‌ها", "en": "Reports"}
+
+
+def _match_full_text(paragraph: str, texts: list[str]) -> str:
+    """د سرلیک پاراګراف د خام راپورونو سره ورته کړه، بشپړ متن راوګرځوه.
+
+    The source may be in the 2nd/3rd paragraph, so feed the full report — find
+    the raw text whose start matches this paragraph. Falls back to the paragraph.
+    """
+    key = re.sub(r"\s+", " ", paragraph.strip())[:40]
+    if not key:
+        return paragraph
+    for t in texts:
+        if key in re.sub(r"\s+", " ", t):
+            return t
+    return paragraph
+
+
 async def extract_source(text: str, config: Config) -> str:
     """د کاروونکي اختصاصي پرامپټ په مرسته د یوه راپور سرچینه راوباسه.
 
@@ -263,7 +307,9 @@ async def analyze(texts: list[str], config: Config) -> dict:
 
     Two stages: the main call maps reports to languages and returns the verbatim
     first paragraph + location; then the dedicated source prompt runs per
-    language. Source failures are non-fatal (title still renders).
+    language on the FULL report (source may be in the 2nd/3rd paragraph). Empty
+    results fall back to the language default (رواپورونه/گزارش‌ها/Reports).
+    Source failures are non-fatal (title still renders).
     """
     if not config.gemini_api_keys:
         raise RuntimeError("د Gemini هیڅ کیلي نه ده تنظیم شوې (GEMINI_API_KEYS).")
@@ -277,15 +323,18 @@ async def analyze(texts: list[str], config: Config) -> dict:
         # سرلیک = پاراګراف، د احتمالي «سرچینه:» مختاړي پرته.
         _, title = _split_source_title(para)
         result[f"title_{lang}"] = title
-        # مرحله ۲ — سرچینه د اختصاصي پرامپټ له لارې (که پاراګراف تش نه وي).
-        if para:
-            try:
-                result[f"source_{lang}"] = await extract_source(para, config)
-            except Exception as err:  # noqa: BLE001 - سرچینه اختیاري ده، pipeline مه دروه
-                logger.warning("[%s] د سرچینې استخراج ناکام: %s", lang, err)
-                result[f"source_{lang}"] = ""
-        else:
+        if not para:
             result[f"source_{lang}"] = ""
+            continue
+        # مرحله ۲ — سرچینه د بشپړ راپور څخه د اختصاصي پرامپټ له لارې.
+        full = _match_full_text(para, texts)
+        try:
+            src = await extract_source(full, config)
+        except Exception as err:  # noqa: BLE001 - سرچینه اختیاري ده، pipeline مه دروه
+            logger.warning("[%s] د سرچینې استخراج ناکام: %s", lang, err)
+            src = ""
+        # rule 8 — که سرچینه ونه موندل شوه، د ژبې ډیفالټ وکاروه.
+        result[f"source_{lang}"] = src or _DEFAULT_SOURCE[lang]
 
     return result
 

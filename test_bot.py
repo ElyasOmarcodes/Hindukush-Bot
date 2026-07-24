@@ -206,13 +206,30 @@ def test_clean_source_strips_labels_and_quotes():
 def test_design_source_settings():
     cfg = load_config("config/settings.json")
     assert cfg.design.source_color_hex == "FEB407"
-    assert cfg.design.source_size == 45
+    assert cfg.design.source_size == 49
 
 
 def test_source_box_moved_up():
     from modules.design.layout import _SOURCE_BOX_RTL, _SOURCE_BOX_EN
-    assert _SOURCE_BOX_RTL[1] == 965  # top
-    assert _SOURCE_BOX_EN[1] == 965
+    assert _SOURCE_BOX_RTL[1] == 960  # top
+    assert _SOURCE_BOX_EN[1] == 960
+
+
+def test_langs_use_three_separate_templates():
+    from modules.design.layout import LANGS
+    tpls = {lg["code"]: lg["template"] for lg in LANGS}
+    assert tpls == {"ps": "news_pa.png", "fa": "news_fa.png", "en": "news_en.png"}
+
+
+def test_default_source_per_language():
+    assert gemini._DEFAULT_SOURCE == {"ps": "راپورونه", "fa": "گزارش‌ها", "en": "Reports"}
+
+
+def test_source_prompt_has_new_rules():
+    # د ۴ ګونو اصولو شتون: ارګان پر شخص، ډیفالټ راپورونه.
+    assert "ORGANIZATION OVER PERSON" in gemini.SOURCE_PROMPT
+    assert "راپورونه" in gemini.SOURCE_PROMPT
+    assert "گزارش‌ها" in gemini.SOURCE_PROMPT
 
 
 def test_menu_keyboards_build():

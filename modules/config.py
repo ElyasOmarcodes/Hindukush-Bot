@@ -37,7 +37,7 @@ class DesignConfig:
     title_valign: str = "top"     # "top" | "middle"
     line_spacing: float = 1.45
 
-    source_size: int = 45
+    source_size: int = 49
     source_min_size: int = 24
     source_color_hex: str = "FEB407"
     # د سرچینې وروسته نښه (لکه «:»)؛ تش "" یې بندوي.
