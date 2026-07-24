@@ -150,6 +150,38 @@ def test_extract_json_empty_raises():
         gemini.extract_json("")
 
 
+def test_ensure_sources_splits_colon_from_title():
+    # Gemini سرچینه خالي پریښوده خو سرلیک «:» لري → کوډ یې بیلوي.
+    data = {"title_ps": "الجزیره: بمبار پیښه وشوه", "source_ps": ""}
+    out = gemini.ensure_sources(data)
+    assert out["source_ps"] == "الجزیره:"
+    assert out["title_ps"] == "بمبار پیښه وشوه"
+
+
+def test_ensure_sources_keeps_existing_source():
+    data = {"title_en": "Big news here", "source_en": "Reuters:"}
+    out = gemini.ensure_sources(data)
+    assert out["source_en"] == "Reuters:"
+    assert out["title_en"] == "Big news here"
+
+
+def test_ensure_sources_ignores_midsentence_colon():
+    # د پیل نه لرې «:» باید سرچینه ونه ګڼل شي.
+    long_title = "a" * 45 + ": rest of a very long sentence here"
+    data = {"title_en": long_title, "source_en": ""}
+    out = gemini.ensure_sources(data)
+    assert out["source_en"] == ""
+    assert out["title_en"] == long_title
+
+
+def test_gemini_models_uses_ordered_list(tmp_path):
+    settings = tmp_path / "s.json"
+    settings.write_text('{"gemini": {"models": ["m-strong", "m-mid", "m-weak"]}}', encoding="utf-8")
+    cfg = load_config(settings)
+    # cascade باید همدا ترتیب (قوي → ضعیف) وکاروي.
+    assert cfg.gemini_models == ["m-strong", "m-mid", "m-weak"]
+
+
 # ---------- design ----------
 
 def test_parse_color_rrggbb():

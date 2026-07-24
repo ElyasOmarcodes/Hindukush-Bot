@@ -37,8 +37,8 @@ class DesignConfig:
     title_valign: str = "top"     # "top" | "middle"
     line_spacing: float = 1.45
 
-    source_size: int = 38
-    source_min_size: int = 28
+    source_size: int = 35
+    source_min_size: int = 24
 
     highlight_color_hex: str = "FEA20E"
     highlight_fraction: float = 0.45
@@ -74,8 +74,12 @@ class Config:
     pending_dir: str = "data/pending"
 
     gemini_api_keys: list[str] = field(default_factory=list)
+    # د مډلونو ترتیب لښتی — له تر ټولو قوي څخه ضعیف. cascade همدا ترتیب کاروي.
+    # A strongest-first list of models; the cascade walks it in order.
+    models: list[str] = field(default_factory=lambda: ["gemini-2.5-flash", "gemini-2.5-flash-lite"])
+    # پخوانۍ (backward-compat) — که `models` تش وي کارول کیږي.
     primary_model: str = "gemini-2.5-flash"
-    fallback_model: str = "gemini-2.0-flash-lite"
+    fallback_model: str = "gemini-2.5-flash-lite"
 
     max_items: int = 4
     max_images: int = 1
@@ -90,7 +94,9 @@ class Config:
 
     @property
     def gemini_models(self) -> list[str]:
-        """د cascade لپاره د مډلونو ترتیب (لومړی → بدیل)."""
+        """د cascade لپاره د مډلونو ترتیب (قوي → ضعیف)."""
+        if self.models:
+            return self.models
         models = [self.primary_model]
         if self.fallback_model and self.fallback_model != self.primary_model:
             models.append(self.fallback_model)
@@ -137,8 +143,9 @@ def load_config(settings_path: str | Path = "config/settings.json") -> Config:
         packages_dir=tg.get("packages_dir", "data/packages"),
         pending_dir=tg.get("pending_dir", "data/pending"),
         gemini_api_keys=list(gm.get("api_keys", []) or []),
+        models=list(gm.get("models", []) or []),
         primary_model=gm.get("primary_model", "gemini-2.5-flash"),
-        fallback_model=gm.get("fallback_model", "gemini-2.0-flash-lite"),
+        fallback_model=gm.get("fallback_model", "gemini-2.5-flash-lite"),
         max_items=int(pk.get("max_items", 4)),
         max_images=int(pk.get("max_images", 1)),
         max_texts=int(pk.get("max_texts", 3)),

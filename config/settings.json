@@ -8,8 +8,16 @@
   },
   "gemini": {
     "api_keys": [],
-    "primary_model": "gemini-2.5-flash",
-    "fallback_model": "gemini-2.0-flash-lite"
+    "models": [
+      "gemini-3.5-flash",
+      "gemini-3.6-flash",
+      "gemini-3.1-pro-preview",
+      "gemini-3.1-flash-lite",
+      "gemini-2.5-flash",
+      "gemini-2.5-flash-lite",
+      "gemma-4-31b-it",
+      "gemma-4-26b-a4b-it"
+    ]
   },
   "package": {
     "max_items": 4,
@@ -39,8 +47,8 @@
     "title_valign": "top",
     "line_spacing": 1.45,
 
-    "source_size": 38,
-    "source_min_size": 28,
+    "source_size": 35,
+    "source_min_size": 24,
 
     "highlight_color_hex": "FEA20E",
     "highlight_fraction": 0.45,

@@ -146,16 +146,19 @@ def fit_source(text: str, font_path: str, box: tuple, is_english: bool, dcfg: De
 
 
 def draw_source(canvas, text: str, font_path: str, box: tuple, is_english: bool, dcfg: DesignConfig) -> None:
-    """منبع ورسموه — سپینه، RTL=ښي تنظیم، LTR=کیڼ تنظیم."""
+    """منبع ورسموه — سپینه، یو لاین، عمودي مرکز؛ RTL=ښي-مرکز، LTR=کیڼ-مرکز.
+
+    Anchored so the source sits exactly right-centre (RTL) or left-centre (LTR)
+    inside its box.
+    """
     if not text.strip():
         return
     font = fit_source(text, font_path, box, is_english, dcfg)
     draw = ImageDraw.Draw(canvas)
     bx, by, bw, bh = box
     color = parse_color(dcfg.normal_color_hex)
-    y = by + (bh - font.size) // 2
+    cy = by + bh // 2
     if is_english:
-        x = bx
+        draw.text((bx, cy), text, font=font, fill=color, direction="ltr", anchor="lm")
     else:
-        x = bx + bw - text_width(font, text, is_english)  # ښي ته تنظیم
-    draw.text((x, y), text, font=font, fill=color, direction=_direction(is_english))
+        draw.text((bx + bw, cy), text, font=font, fill=color, direction="rtl", anchor="rm")
