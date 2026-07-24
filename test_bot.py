@@ -64,7 +64,10 @@ def test_config_env_overlay(monkeypatch, tmp_path):
 def test_config_defaults_when_missing(tmp_path):
     cfg = load_config(tmp_path / "does_not_exist.json")
     assert cfg.max_items == 4
-    assert cfg.gemini_models[0] == "gemini-2.5-flash"
+    # د ثابت لښت لومړی (قوي) مډل.
+    assert cfg.gemini_models[0] == "gemini-3.5-flash"
+    assert cfg.gemini_models[-1] == "gemma-4-26b-a4b-it"
+    assert len(cfg.gemini_models) == 8
 
 
 # ---------- package: limits & validation ----------
@@ -198,6 +201,27 @@ def test_clean_source_strips_labels_and_quotes():
     assert gemini._clean_source('"رویټرز"\nextra line') == "رویټرز"
     assert gemini._clean_source("  باختر آژانس  ") == "باختر آژانس"
     assert gemini._clean_source("") == ""
+
+
+def test_design_source_settings():
+    cfg = load_config("config/settings.json")
+    assert cfg.design.source_color_hex == "FEB407"
+    assert cfg.design.source_size == 45
+
+
+def test_source_box_moved_up():
+    from modules.design.layout import _SOURCE_BOX_RTL, _SOURCE_BOX_EN
+    assert _SOURCE_BOX_RTL[1] == 965  # top
+    assert _SOURCE_BOX_EN[1] == 965
+
+
+def test_menu_keyboards_build():
+    from modules import commands
+    assert commands.BTN_CREATE in commands.BUTTON_LABELS
+    # هرې منو باید جوړه شي (استثنا وا نه چوي).
+    assert commands.main_keyboard().keyboard
+    assert commands.create_keyboard().keyboard
+    assert commands.active_keyboard().keyboard
 
 
 def test_source_prompt_has_key_rules():

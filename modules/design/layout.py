@@ -9,10 +9,11 @@ from __future__ import annotations
 
 # باکس = (left, top, width, height) — تل left/top/width/height (نه right/bottom).
 # د پښتو + فارسي باکسونه یو شان دي.
+# د منبع باکس ~۱۵px پورته خوا ته نقل شو (top: 980 → 965).
 _TITLE_BOX_RTL = (202, 1086, 1176, 421)
-_SOURCE_BOX_RTL = (439, 980, 817, 104)
+_SOURCE_BOX_RTL = (439, 965, 817, 104)
 _TITLE_BOX_EN = (267, 1086, 1218, 421)
-_SOURCE_BOX_EN = (380, 980, 864, 104)
+_SOURCE_BOX_EN = (380, 965, 864, 104)
 
 # درې ژبې — پښتو/فارسي یو ټمپلیټ او یو باکس شریکوي.
 LANGS = [

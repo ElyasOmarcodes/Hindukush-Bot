@@ -37,8 +37,9 @@ class DesignConfig:
     title_valign: str = "top"     # "top" | "middle"
     line_spacing: float = 1.45
 
-    source_size: int = 35
+    source_size: int = 45
     source_min_size: int = 24
+    source_color_hex: str = "FEB407"
     # د سرچینې وروسته نښه (لکه «:»)؛ تش "" یې بندوي.
     source_suffix: str = ":"
 
@@ -76,12 +77,18 @@ class Config:
     pending_dir: str = "data/pending"
 
     gemini_api_keys: list[str] = field(default_factory=list)
-    # د مډلونو ترتیب لښتی — له تر ټولو قوي څخه ضعیف. cascade همدا ترتیب کاروي.
-    # A strongest-first list of models; the cascade walks it in order.
-    models: list[str] = field(default_factory=lambda: ["gemini-2.5-flash", "gemini-2.5-flash-lite"])
-    # پخوانۍ (backward-compat) — که `models` تش وي کارول کیږي.
-    primary_model: str = "gemini-2.5-flash"
-    fallback_model: str = "gemini-2.5-flash-lite"
+    # د مډلونو ترتیب لښتی — له تر ټولو قوي څخه ضعیف. cascade **یوازې** دا ترتیب کاروي.
+    # Fixed, ordered model list (strongest first). No other models are used.
+    models: list[str] = field(default_factory=lambda: [
+        "gemini-3.5-flash",
+        "gemini-3.6-flash",
+        "gemini-3.1-pro-preview",
+        "gemini-3.1-flash-lite",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemma-4-31b-it",
+        "gemma-4-26b-a4b-it",
+    ])
 
     max_items: int = 4
     max_images: int = 1
@@ -97,12 +104,7 @@ class Config:
     @property
     def gemini_models(self) -> list[str]:
         """د cascade لپاره د مډلونو ترتیب (قوي → ضعیف)."""
-        if self.models:
-            return self.models
-        models = [self.primary_model]
-        if self.fallback_model and self.fallback_model != self.primary_model:
-            models.append(self.fallback_model)
-        return models
+        return list(self.models)
 
 
 def _split_csv_ints(value: str) -> list[int]:
@@ -145,13 +147,14 @@ def load_config(settings_path: str | Path = "config/settings.json") -> Config:
         packages_dir=tg.get("packages_dir", "data/packages"),
         pending_dir=tg.get("pending_dir", "data/pending"),
         gemini_api_keys=list(gm.get("api_keys", []) or []),
-        models=list(gm.get("models", []) or []),
-        primary_model=gm.get("primary_model", "gemini-2.5-flash"),
-        fallback_model=gm.get("fallback_model", "gemini-2.5-flash-lite"),
         max_items=int(pk.get("max_items", 4)),
+        # NOTE: `models` filled below (only if settings.json provides a list).
         max_images=int(pk.get("max_images", 1)),
         max_texts=int(pk.get("max_texts", 3)),
     )
+    # د مډلونو لښتی یوازې که settings.json یې ورکړي (نه‌نو د ثابت default).
+    if gm.get("models"):
+        cfg.models = list(gm["models"])
     if rx.get("sequence"):
         cfg.reaction_sequence = list(rx["sequence"])
     if rx.get("fallback"):

@@ -28,11 +28,8 @@ from modules.utils import ensure_dirs, setup_logging
 logger = logging.getLogger("main")
 
 BOT_COMMANDS = [
-    BotCommand("on", "د پیغامونو غوږ نیول پیل کړه"),
-    BotCommand("off", "غوږ نیول ودروه (موقت)"),
-    BotCommand("cmp", "پکیج بشپړ او پروسس کړه"),
-    BotCommand("cnl", "روان عملیات لغوه کړه"),
-    BotCommand("clean", "بفر پاک کړه"),
+    BotCommand("start", "منو پرانیستل 🛠"),
+    BotCommand("menu", "منو پرانیستل 🛠"),
     BotCommand("status", "اوسنی حالت"),
     BotCommand("help", "مرسته"),
 ]
@@ -79,7 +76,9 @@ def build_application(config: Config) -> Application:
         chat_filter = filters.ALL
         logger.warning("TELEGRAM_GROUP_ID نه دی ټاکل شوی — ټول چټونه څارل کیږي (dev حالت)")
 
-    # ---- دستورونه ----
+    # ---- دستورونه (د پاور-کاروونکو لپاره لا هم کار کوي) ----
+    app.add_handler(CommandHandler("start", commands.cmd_start, filters=chat_filter))
+    app.add_handler(CommandHandler("menu", commands.cmd_start, filters=chat_filter))
     app.add_handler(CommandHandler("on", commands.cmd_on, filters=chat_filter))
     app.add_handler(CommandHandler("off", commands.cmd_off, filters=chat_filter))
     app.add_handler(CommandHandler("cmp", commands.cmd_cmp, filters=chat_filter))
@@ -88,6 +87,13 @@ def build_application(config: Config) -> Application:
     app.add_handler(CommandHandler("status", commands.cmd_status, filters=chat_filter))
     app.add_handler(CommandHandler("help", commands.cmd_help, filters=chat_filter))
     app.add_handler(CallbackQueryHandler(commands.on_callback))
+
+    # ---- د بوټ کیبورډ بټنې — باید له monitor مخکې ثبت شي چې د بټنو متن
+    #      د پکیج محتوا ونه ګڼل شي (یو ګروپ کې لومړی سمون کوونکی چلیږي).
+    app.add_handler(MessageHandler(
+        chat_filter & filters.Text(commands.BUTTON_LABELS),
+        commands.on_button,
+    ))
 
     # ---- د پیغامونو څارنه (متن + انځور + د image document) ----
     app.add_handler(MessageHandler(

@@ -12,7 +12,14 @@ import json
 import logging
 from pathlib import Path
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, InputMediaDocument, Update
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputMediaDocument,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    Update,
+)
 from telegram.ext import ContextTypes
 
 from . import gemini
@@ -25,6 +32,46 @@ logger = logging.getLogger("commands")
 
 # د هرې ژبې د پرمختګ ګام (د PROGRESS_STEPS index).
 _LANG_STEP = {"ps": 3, "fa": 4, "en": 5}
+
+# ─────────────── د بوټ کیبورډ بټنې (منو) ───────────────
+# د دستورونو پر ځای ښکلې بټنې — چې غیر مسلکي کسان هم اسانه کار وکړي.
+BTN_CREATE = "🛠 جوړول"
+BTN_NEWS = "📰 خبر"
+BTN_URGENT = "🚨 عاجل"
+BTN_QUOTE = "💬 نقل قول"
+BTN_BACK = "◀️ بیرته شاته"
+BTN_COMPLETE = "✅ بشپړول"
+BTN_CLEAN = "🗑 پاکول"
+BTN_CANCEL = "❌ لغوه"
+
+# ټول د بټنو لیبلونه — چې monitor یې د پکیج محتوا ونه ګڼي.
+BUTTON_LABELS = [
+    BTN_CREATE, BTN_NEWS, BTN_URGENT, BTN_QUOTE,
+    BTN_BACK, BTN_COMPLETE, BTN_CLEAN, BTN_CANCEL,
+]
+
+
+def _kb(rows: list[list[str]]) -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [[KeyboardButton(b) for b in row] for row in rows],
+        resize_keyboard=True,
+        is_persistent=True,
+    )
+
+
+def main_keyboard() -> ReplyKeyboardMarkup:
+    """اصلي منو — یوازې «جوړول»."""
+    return _kb([[BTN_CREATE]])
+
+
+def create_keyboard() -> ReplyKeyboardMarkup:
+    """د «جوړول» فرعي منو."""
+    return _kb([[BTN_NEWS, BTN_URGENT], [BTN_QUOTE], [BTN_BACK]])
+
+
+def active_keyboard() -> ReplyKeyboardMarkup:
+    """د «خبر» فعال حالت منو."""
+    return _kb([[BTN_COMPLETE], [BTN_CLEAN, BTN_CANCEL], [BTN_BACK]])
 
 
 def _state(context: ContextTypes.DEFAULT_TYPE) -> BotState:
@@ -41,6 +88,48 @@ def _is_authorized(state: BotState, update: Update) -> bool:
         return True
     user = update.effective_user
     return bool(user and user.id in admins)
+
+
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """اصلي منو وښیه (د بوټ کیبورډ بټنې)."""
+    await update.effective_message.reply_text(
+        "🤖 ښه راغلاست! د پیل لپاره «🛠 جوړول» ووهئ.",
+        reply_markup=main_keyboard(),
+    )
+
+
+async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """د بوټ کیبورډ بټنو اداره — د دستورونو پر ځای."""
+    text = (update.effective_message.text or "").strip()
+    state = _state(context)
+
+    if text == BTN_CREATE:
+        await update.effective_message.reply_text(
+            "یو انتخاب وکړئ:", reply_markup=create_keyboard()
+        )
+    elif text == BTN_NEWS:
+        state.listening = True
+        logger.info("د خبر حالت فعال شو (بټن)")
+        await update.effective_message.reply_text(
+            "📰 د خبر حالت فعال شو — اوس انځور او متنونه ولیږئ، بیا «✅ بشپړول» ووهئ.",
+            reply_markup=active_keyboard(),
+        )
+    elif text in (BTN_URGENT, BTN_QUOTE):
+        await update.effective_message.reply_text(
+            "⏳ دا برخه اوس غیر فعاله ده — راتلونکې کې به فعاله شي."
+        )
+    elif text == BTN_BACK:
+        state.reset()
+        state.listening = False
+        await update.effective_message.reply_text(
+            "🏠 اصلي منو", reply_markup=main_keyboard()
+        )
+    elif text == BTN_COMPLETE:
+        await cmd_cmp(update, context)
+    elif text == BTN_CLEAN:
+        await cmd_clean(update, context)
+    elif text == BTN_CANCEL:
+        await cmd_cnl(update, context)
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -228,4 +317,7 @@ async def run_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None
     finally:
         # د دورې وروسته بشپړ reset — حتی که خطا راشي (listening نه بدلوي).
         state.reset()
-        await context.bot.send_message(chat_id, "🔄 چمتو — نوی پکیج ولیږئ.")
+        # فعال حالت منو بیا وښیه چې کاروونکی نوی پکیج پیل کولی شي.
+        await context.bot.send_message(
+            chat_id, "🔄 چمتو — نوی پکیج ولیږئ.", reply_markup=active_keyboard()
+        )

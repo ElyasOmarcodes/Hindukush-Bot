@@ -156,7 +156,7 @@ def draw_source(canvas, text: str, font_path: str, box: tuple, is_english: bool,
     font = fit_source(text, font_path, box, is_english, dcfg)
     draw = ImageDraw.Draw(canvas)
     bx, by, bw, bh = box
-    color = parse_color(dcfg.normal_color_hex)
+    color = parse_color(dcfg.source_color_hex)
     cy = by + bh // 2
     if is_english:
         draw.text((bx, cy), text, font=font, fill=color, direction="ltr", anchor="lm")
