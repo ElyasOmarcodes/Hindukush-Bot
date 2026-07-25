@@ -417,6 +417,28 @@ async def _main_extract(reports: list[str], config: Config) -> dict:
     return raw
 
 
+async def extract_titles(texts: list[str], config: Config) -> dict:
+    """یوازې سرلیکونه راوباسه (د عاجل خبر لپاره — بې سرچینې/موقعیت).
+
+    Lightweight: the main call only (with retry), returning {lang: headline}
+    for the languages that have a report. No source or location work.
+    """
+    if not config.gemini_api_keys:
+        raise RuntimeError("د Gemini هیڅ کیلي نه ده تنظیم شوې (GEMINI_API_KEYS).")
+    reports = [t.strip() for t in texts if t.strip()]
+    raw = await _main_extract(reports, config)
+    titles: dict = {}
+    for lang in ("ps", "fa", "en"):
+        para = (raw.get(f"text_{lang}") or "").strip()
+        if not para:
+            continue
+        para = para.split("\n")[0].strip()
+        _, title = _split_source_title(para)
+        if title:
+            titles[lang] = title
+    return titles
+
+
 async def analyze(texts: list[str], config: Config) -> dict:
     """بشپړ تحلیل — سرلیک (کټ مټ، یوازې د Gemini لومړی پاراګراف) + موقعیت + سرچینه.
 

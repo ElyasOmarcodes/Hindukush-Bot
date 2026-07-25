@@ -58,6 +58,17 @@ class DesignConfig:
 
     progress_min_interval: float = 1.0
 
+    # ─────────── د عاجل خبر ډیزاین (بېل ټمپلیټ، یوازې عنوان + تاریخ) ───────────
+    urgent_canvas_size: int = 1561
+    urgent_title_font: str = "FModam-FBold[@mimvid].ttf"
+    urgent_title_size: int = 80
+    urgent_title_color_hex: str = "FFFFFF"
+    urgent_highlight_color_hex: str = "DA0404"
+    urgent_highlight_fraction: float = 0.40  # اخیري ۳۵–۴۵٪
+    urgent_date_font: str = "couriernew.ttf"
+    urgent_date_size: int = 45
+    urgent_date_color_hex: str = "DA0404"
+
     @property
     def fonts_dir(self) -> str:
         return f"{self.assets_dir}/fonts"

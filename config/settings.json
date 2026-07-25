@@ -61,6 +61,16 @@
     "jpeg_quality_min": 92,
     "target_kb": 1600,
 
-    "progress_min_interval": 1.0
+    "progress_min_interval": 1.0,
+
+    "urgent_canvas_size": 1561,
+    "urgent_title_font": "FModam-FBold[@mimvid].ttf",
+    "urgent_title_size": 80,
+    "urgent_title_color_hex": "FFFFFF",
+    "urgent_highlight_color_hex": "DA0404",
+    "urgent_highlight_fraction": 0.40,
+    "urgent_date_font": "couriernew.ttf",
+    "urgent_date_size": 45,
+    "urgent_date_color_hex": "DA0404"
   }
 }

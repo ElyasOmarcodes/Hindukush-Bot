@@ -72,3 +72,13 @@ LOCATION_MAP = {
 # د جیمنای د موقعیت مجاز ارزښتونه؛ نامعلوم → World.
 VALID_LOCATIONS = ("Afghanistan", "Region", "Middle East", "World")
 DEFAULT_LOCATION = "World"
+
+# ─────────────── د عاجل خبر جوړښت (1561×1561، یوازې عنوان + تاریخ) ───────────────
+URGENT_TEMPLATES = {
+    "ps": "Urgent_Pashto.png",
+    "fa": "Urgent_Persian.png",
+    "en": "Urgent_English.png",
+}
+# باکس = (left, top, width, height)
+URGENT_TITLE_BOX = (163, 584, 1223, 390)
+URGENT_DATE_BOX = (267, 1241, 410, 46)

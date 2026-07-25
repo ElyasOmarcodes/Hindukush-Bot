@@ -77,6 +77,17 @@ def wrap_text(text: str, font_path: str, size: int, max_w: int, is_english: bool
     return lines or [""]
 
 
+def fit_to_box(text: str, font_path: str, box_w: int, box_h: int, gap: int,
+               target: int, floor: int, is_english: bool):
+    """له target پیل، سایز کوچنی کوه ترڅو ټول متن د باکس دننه ځای شي (بې کلیپ)."""
+    for size in range(target, floor - 1, -1):
+        lines = wrap_text(text, font_path, size, box_w, is_english)
+        lh = line_height(get_font(font_path, size), gap)
+        if len(lines) * lh <= box_h:
+            return size, lines
+    return floor, wrap_text(text, font_path, floor, box_w, is_english)
+
+
 def find_best_size(text: str, font_path: str, box: tuple, is_english: bool, dcfg: DesignConfig):
     """له TARGET پیل، سایز کوچنی کوه ترڅو **ټول** عنوان د باکس دننه ځای شي.
 

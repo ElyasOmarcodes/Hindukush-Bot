@@ -285,6 +285,37 @@ def test_design_line_gap_and_quality():
     assert cfg.design.jpeg_quality_min == 92
 
 
+def test_urgent_templates_and_boxes():
+    from modules.design.layout import URGENT_TEMPLATES, URGENT_TITLE_BOX, URGENT_DATE_BOX
+    assert URGENT_TEMPLATES == {"ps": "Urgent_Pashto.png", "fa": "Urgent_Persian.png", "en": "Urgent_English.png"}
+    assert URGENT_TITLE_BOX == (163, 584, 1223, 390)
+    assert URGENT_DATE_BOX == (267, 1241, 410, 46)
+
+
+def test_urgent_config_values():
+    cfg = load_config("config/settings.json")
+    assert cfg.design.urgent_canvas_size == 1561
+    assert cfg.design.urgent_title_size == 80
+    assert cfg.design.urgent_highlight_color_hex == "DA0404"
+    assert cfg.design.urgent_date_color_hex == "DA0404"
+
+
+def test_jalali_date_format():
+    from modules.design.urgent import current_jalali_date
+    d = current_jalali_date()
+    parts = d.split("/")
+    assert len(parts) == 3 and len(parts[0]) == 4  # yyyy/mm/d
+
+
+def test_render_urgent_produces_1561_image(tmp_path):
+    from PIL import Image
+    from modules.design.urgent import render_urgent_one
+    cfg = load_config("config/settings.json")
+    p = render_urgent_one("ps", "د ازموینې لپاره یو عاجل سرلیک دلته دی", cfg, tmp_path)
+    assert p.exists()
+    assert Image.open(p).size == (1561, 1561)
+
+
 def test_botstate_mode_default_news():
     state = _state()
     assert state.mode == "news"

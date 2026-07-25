@@ -24,6 +24,7 @@ from telegram.ext import ContextTypes
 
 from . import gemini
 from .design import render as design_render
+from .design import urgent as design_urgent
 from .design.layout import LANGS
 from .package import BotState, collect_texts, save_package, validate_package
 from .progress import Progress
@@ -298,9 +299,29 @@ async def _send_designs(context, chat_id: int, paths: list[Path]) -> None:
     await context.bot.send_media_group(chat_id=chat_id, media=media)
 
 
+async def _render_urgent(context, titles: dict, pkg_dir: Path, state: BotState, prog: Progress) -> list[Path]:
+    """د عاجل خبر انځورونه (یوازې عنوان + تاریخ) په executor کې جوړ کړه."""
+    loop = asyncio.get_running_loop()
+    paths: list[Path] = []
+    for lang, title in titles.items():
+        await prog.step(_LANG_STEP.get(lang, 3))
+        try:
+            path = await loop.run_in_executor(
+                None, design_urgent.render_urgent_one, lang, title, state.config, pkg_dir
+            )
+            paths.append(path)
+        except Exception as err:  # noqa: BLE001
+            logger.error("[%s] د عاجل ډیزاین ناکامي: %s", lang, err, exc_info=True)
+    return paths
+
+
 async def run_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
-    """بشپړ pipeline: ساتل → Gemini → ۳ ډیزاینه → د سند لیږل → reset."""
+    """بشپړ pipeline — د حالت پر بنسټ (news یا urgent)."""
     state = _state(context)
+    if state.mode == "urgent":
+        await run_urgent_pipeline(context, chat_id)
+        return
+
     state.processing = True
     prog = Progress(context.bot, chat_id, min_interval=state.config.design.progress_min_interval)
     await prog.start()
@@ -333,6 +354,43 @@ async def run_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None
         await prog.finish(ok=False, err=str(err))
     finally:
         # د دورې وروسته بشپړ reset او بیرته اصلي پاڼې (منو) ته ورګرځي.
+        state.reset()
+        state.listening = False
+        state.mode = "news"
+        await context.bot.send_message(
+            chat_id, "✅ بشپړ شو — د نوي پکیج لپاره «🛠 جوړول» ووهئ.",
+            reply_markup=main_keyboard(),
+        )
+
+
+async def run_urgent_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
+    """د عاجل خبر pipeline: ساتل → سرلیکونه → عاجل ډیزاین → لیږل → منو."""
+    state = _state(context)
+    state.processing = True
+    prog = Progress(context.bot, chat_id, min_interval=state.config.design.progress_min_interval)
+    await prog.start()
+    try:
+        await prog.step(0)
+        pkg_dir = save_package(state)
+        texts = collect_texts(state)
+
+        await prog.step(1)  # جیمنای — یوازې سرلیکونه
+        titles = await gemini.extract_titles(texts, state.config)
+        if not titles:
+            raise RuntimeError("هیڅ سرلیک ترلاسه نشو")
+
+        paths = await _render_urgent(context, titles, pkg_dir, state, prog)
+        if not paths:
+            raise RuntimeError("هیڅ عاجل انځور جوړ نشو")
+
+        await prog.step(7)
+        await _send_designs(context, chat_id, paths)
+        logger.info("%d عاجل انځورونه ولیږل شول", len(paths))
+        await prog.finish(ok=True)
+    except Exception as err:  # noqa: BLE001
+        logger.error("د عاجل pipeline خطا: %s", err, exc_info=True)
+        await prog.finish(ok=False, err=str(err))
+    finally:
         state.reset()
         state.listening = False
         state.mode = "news"
