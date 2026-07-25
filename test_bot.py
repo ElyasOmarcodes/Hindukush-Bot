@@ -324,6 +324,32 @@ def test_kashida_not_applied_to_english_measure():
     assert TATWEEL not in out
 
 
+def test_quote_layout_and_config():
+    from modules.design.layout import (
+        QUOTE_TEMPLATES, QUOTE_PERSON_BOX, QUOTE_TITLE_BOX, QUOTE_NAME_BOX, QUOTE_RANK_BOX,
+    )
+    assert QUOTE_TEMPLATES == {"ps": "Quotation_Pashto.png", "fa": "Quotation_Persian.png", "en": "Quotation_English.png"}
+    assert QUOTE_PERSON_BOX == (677, 0, 686, 1175)
+    assert QUOTE_TITLE_BOX == (62, 223, 554, 687)
+    assert QUOTE_NAME_BOX == (62, 947, 554, 57)
+    assert QUOTE_RANK_BOX == (62, 1002, 554, 110)
+    cfg = load_config("config/settings.json")
+    assert cfg.design.quote_canvas_size == 1353
+    assert cfg.design.quote_name_color_hex == "D8DFE7"
+    assert cfg.design.quote_rank_color_hex == "FEB407"
+
+
+def test_render_quote_produces_image(tmp_path):
+    from PIL import Image
+    from modules.design.quote import render_quote_one
+    person = tmp_path / "p.jpg"
+    Image.new("RGB", (800, 1400), (60, 70, 90)).save(person)
+    cfg = load_config("config/settings.json")
+    p = render_quote_one("ps", "دا یو ازموینه‌یي نقل قول دی چې دلته لیکل شوی", "احمد", "وزیر", str(person), cfg, tmp_path)
+    assert p.exists()
+    assert Image.open(p).size == (1920, 1920)
+
+
 def test_urgent_progress_has_no_gemini():
     from modules.progress import URGENT_PROGRESS_STEPS
     labels = " ".join(label for _icon, label in URGENT_PROGRESS_STEPS)

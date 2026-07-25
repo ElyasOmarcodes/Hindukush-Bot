@@ -82,3 +82,16 @@ URGENT_TEMPLATES = {
 # باکس = (left, top, width, height)
 URGENT_TITLE_BOX = (163, 584, 1223, 390)
 URGENT_DATE_BOX = (267, 1241, 410, 46)
+
+# ─────────────── د نقل قول جوړښت (1353×1353) ───────────────
+QUOTE_TEMPLATES = {
+    "ps": "Quotation_Pashto.png",
+    "fa": "Quotation_Persian.png",
+    "en": "Quotation_English.png",
+}
+# د شخص انځور — ښي-پورته، تر ټولو لاندې لایر (ټمپلیټ یې پر مخ راځي).
+QUOTE_PERSON_BOX = (677, 0, 686, 1175)
+# باکس = (left, top, width, height) — ټول د ټمپلیټ پر مخ.
+QUOTE_TITLE_BOX = (62, 223, 554, 687)
+QUOTE_NAME_BOX = (62, 947, 554, 57)
+QUOTE_RANK_BOX = (62, 1002, 554, 110)

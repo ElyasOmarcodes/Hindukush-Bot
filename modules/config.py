@@ -71,6 +71,20 @@ class DesignConfig:
     urgent_date_size: int = 54
     urgent_date_color_hex: str = "DA0404"
 
+    # ─────────── د نقل قول ډیزاین (شخص انځور + نقل قول + نوم + رتبه) ───────────
+    quote_canvas_size: int = 1353
+    quote_title_font: str = "FModam-FBold[@mimvid].ttf"
+    quote_title_size: int = 58
+    quote_title_color_hex: str = "FFFFFF"
+    quote_highlight_color_hex: str = "FEA20E"   # لکه د خبر عنوان هایلایټ
+    quote_highlight_fraction: float = 0.40      # اخیري ۳۵–۴۵٪
+    quote_name_font: str = "FModam-FBold[@mimvid].ttf"
+    quote_name_size: int = 40
+    quote_name_color_hex: str = "D8DFE7"
+    quote_rank_font: str = "FModam-FRegular[@mimvid].ttf"
+    quote_rank_size: int = 40
+    quote_rank_color_hex: str = "FEB407"
+
     @property
     def fonts_dir(self) -> str:
         return f"{self.assets_dir}/fonts"
