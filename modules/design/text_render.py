@@ -89,26 +89,49 @@ def fit_to_box(text: str, font_path: str, box_w: int, box_h: int, gap: int,
 
 
 def find_best_size(text: str, font_path: str, box: tuple, is_english: bool, dcfg: DesignConfig):
-    """له TARGET پیل، سایز کوچنی کوه ترڅو **ټول** عنوان د باکس دننه ځای شي.
+    """د نږدې-ډیفالټ رینج [normal_min..normal_max] څخه هغه سایز وټاکه چې د لاینونو
+    ترتیب یې تر ټولو ښه وي (پاسني لاینونه ≥ ښکتني لاینونه، بې یتیم وروستي لاین)،
+    او ډیفالټ سایز ته نږدې وي. که متن تر normal_min هم لوی و، بیا تر abs_min پورې
+    کوچنی کوو ترڅو ټول ځای شي (هیڅکله کلیپ نه کوو).
 
-    Rule: never clip. Shrink the font until the whole title fits. The
-    language-specific minimum (65 / 58) is only the *preferred* floor — for an
-    over-long title we keep shrinking down to ``title_abs_min`` so the full
-    text is always shown inside the box.
+    Pick, from the near-default range, the size whose line distribution best
+    satisfies "upper lines have >= words than lower lines" (no widow), nearest
+    to the default. Only if nothing in that range fits do we shrink further.
     """
     _, _, box_w, box_h = box
-    pref_min = dcfg.title_extended_min if is_english else dcfg.title_normal_min
-    abs_min = min(dcfg.title_abs_min, pref_min)
-    for size in range(dcfg.title_target_size, abs_min - 1, -1):
+    lo, hi, target = dcfg.title_normal_min, dcfg.title_normal_max, dcfg.title_target_size
+
+    fitting = []
+    for size in range(hi, lo - 1, -1):
         lines = wrap_text(text, font_path, size, box_w, is_english)
         lh = line_height(get_font(font_path, size), dcfg.title_line_gap)
         if len(lines) * lh <= box_h:
-            if size < pref_min:
-                logger.info("عنوان اوږد و — سایز تر %dpx ښکته شو چې ټول ځای شي", size)
+            fitting.append((size, lines))
+    if fitting:
+        return min(fitting, key=lambda sl: _balance_score(sl[1], sl[0], target))
+
+    # نږدې-ډیفالټ رینج کې ونه ځایېد → تر abs_min پورې کوچنی کوه (شرینک-ټو-فټ).
+    abs_min = min(dcfg.title_abs_min, lo)
+    for size in range(lo - 1, abs_min - 1, -1):
+        lines = wrap_text(text, font_path, size, box_w, is_english)
+        lh = line_height(get_font(font_path, size), dcfg.title_line_gap)
+        if len(lines) * lh <= box_h:
+            logger.info("عنوان اوږد و — سایز تر %dpx ښکته شو چې ټول ځای شي", size)
             return size, lines
-    # ډیر نادر حالت: حتی په مطلق کوچني سایز کې هم — همدا وکاروه (غوره هڅه).
     logger.warning("عنوان ډیر اوږد و — د %dpx مطلق کوچني سایز سره", abs_min)
     return abs_min, wrap_text(text, font_path, abs_min, box_w, is_english)
+
+
+def _balance_score(lines: list[str], size: int, target: int) -> tuple:
+    """د لاینونو د ترتیب کیفیت — کوچنی = ښه.
+
+    Prefer: no lower line with more words than an upper line, then no lone-word
+    last line (widow), then a size closest to the default.
+    """
+    counts = [len(ln.split()) for ln in lines]
+    violations = sum(1 for i in range(len(counts) - 1) if counts[i] < counts[i + 1])
+    widow = 1 if len(counts) >= 2 and counts[-1] == 1 else 0
+    return (violations, widow, abs(size - target))
 
 
 def draw_title(canvas, text: str, font_path: str, box: tuple, is_english: bool, dcfg: DesignConfig) -> None:

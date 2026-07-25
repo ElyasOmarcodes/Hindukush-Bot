@@ -30,10 +30,10 @@ class DesignConfig:
     photo_height: int = 1309
     photo_fit: str = "stretch"  # "stretch" | "cover"
 
-    title_target_size: int = 72
-    title_normal_min: int = 65   # غوره کوچنی حد (پښتو/فارسي)
-    title_normal_max: int = 79
-    title_extended_min: int = 58  # غوره کوچنی حد (انګلیسي)
+    title_target_size: int = 70   # ډیفالټ (نږدې دې سایز ته ټاکل کیږي)
+    title_normal_min: int = 63    # د نږدې-ډیفالټ رینج کوچنی حد
+    title_normal_max: int = 77    # د نږدې-ډیفالټ رینج لوی حد
+    title_extended_min: int = 58  # (زوړ — اوس د بیلانس رینج normal_min کاروي)
     # مطلق کوچنی حد — که عنوان اوږد وي، سایز تر دې پورې کوچنی کیږي چې ټول ځای شي
     # (هیڅکله کلیپ نه کوو — تل ټول عنوان ښکاره کوو).
     title_abs_min: int = 20

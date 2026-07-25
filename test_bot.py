@@ -331,6 +331,23 @@ def test_urgent_progress_has_no_gemini():
     assert "سرلیکونه" in labels
 
 
+def test_title_sizes_updated():
+    cfg = load_config("config/settings.json")
+    assert cfg.design.title_target_size == 70
+    assert cfg.design.title_normal_min == 63
+    assert cfg.design.title_normal_max == 77
+
+
+def test_balance_score_prefers_non_increasing_and_no_widow():
+    from modules.design.text_render import _balance_score
+    # [5,4] (upper fuller) بهتر تر [4,5] (لاندې زیات).
+    assert _balance_score(["a b c d e", "a b c d"], 70, 70) < _balance_score(["a b c d", "a b c d e"], 70, 70)
+    # بې-یتیم بهتر تر یتیم وروستي لاین.
+    assert _balance_score(["a b c", "a b"], 70, 70) < _balance_score(["a b c d", "a"], 70, 70)
+    # نږدې-ډیفالټ سایز غوره کیږي کله چې ترتیب مساوي وي.
+    assert _balance_score(["a b", "a"], 70, 70) < _balance_score(["a b", "a"], 64, 70)
+
+
 def test_output_size_config():
     cfg = load_config("config/settings.json")
     assert cfg.design.output_size == 1920
