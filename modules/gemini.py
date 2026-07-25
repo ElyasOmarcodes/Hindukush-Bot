@@ -20,12 +20,16 @@ PROMPT_TEMPLATE = """تاسو د یوې خبري ادارې مرستیال یا�
 شوي دي (کیدای شي پښتو، فارسي او انګلیسي وي).
 
 ⚠️ ستا دنده (۱۰۰٪ قلف):
-1. د هر راپور **لومړی پاراګراف** (سرلیک) **کټ مټ (VERBATIM)** راوباسه — هیڅ بدلون، هیڅ \
-لنډول، هیڅ بیا لیکل، هیڅ ژباړه.
-2. ⚠️ **ډیر مهم:** که د پاراګراف په پیل کې د سرچینې نوم وي (لکه «الجزیره:» یا «BBC:»)، \
-هغه **هرومرو ورسره ونیسه** — مه یې غورځوه او مه یې جلا کوه. زه به یې پخپله بیل کړم.
-3. ژبې: `text_ps` = د پښتو راپور لومړی پاراګراف، `text_fa` = فارسي، `text_en` = انګلیسي.
-4. که کومه ژبه نه وي ورکړل شوې، هغه ساحه خالي رشته "" پریږده.
+1. د هر راپور **یوازې لومړی پاراګراف = سرلیک** راوباسه (معمولاً لومړی لاین/جمله). \
+سرلیک **کټ مټ (VERBATIM)** کاپي کړه — هیڅ بدلون، هیڅ ژباړه.
+2. ⚠️ **یوازې سرلیک** راوباسه، **نه** د راپور بشپړ متن او **نه** د بدن (body) نور \
+پاراګرافونه. که سرلیک اوږد وي هم، یوازې لومړی پاراګراف راوباسه.
+3. که د سرلیک په پیل کې د سرچینې نوم وي (لکه «الجزیره:»)، هغه ورسره ونیسه — زه به یې \
+پخپله بیل کړم.
+4. ژبې: هر راپور خپلې ژبې ته وسپاره — `text_ps` = د پښتو راپور سرلیک، `text_fa` = فارسي، \
+`text_en` = انګلیسي. **د هر ورکړل شوي راپور لپاره خپله ساحه حتماً ډکه کړه** — که یو \
+راپور په یوه ژبه ورکړل شوی، هغه ساحه مه پریږده تشه.
+5. که کومه ژبه اصلاً نه وي ورکړل شوې، یوازې هغه ساحه خالي رشته "" پریږده.
 
 د موقعیت (location) ټاکل — دا اصول **په ترتیب** سره پلي کړه، یو ارزښت راوباسه:
 1. که خبر کې افغانستان په هره بڼه ښکیل وي (یوازې، یا له بل هیواد سره یوځای)، یا خاص \
@@ -324,6 +328,21 @@ def map_reports(texts: list[str]) -> dict:
     return per
 
 
+def _match_full_text(paragraph: str, texts: list[str]) -> str:
+    """د سرلیک پاراګراف د خام راپورونو سره ورته کړه، بشپړ متن راوګرځوه.
+
+    The source may be in the 2nd/3rd paragraph, so feed the full report — find
+    the raw text whose start matches this paragraph. Falls back to the paragraph.
+    """
+    key = re.sub(r"\s+", " ", paragraph.strip())[:40]
+    if not key:
+        return paragraph
+    for t in texts:
+        if key in re.sub(r"\s+", " ", t):
+            return t
+    return paragraph
+
+
 def _normalize_location(value: str) -> str:
     value = (value or "").strip()
     return value if value in _VALID_LOCATIONS else "World"
@@ -362,71 +381,72 @@ async def extract_source(text: str, config: Config) -> str:
     return _clean_source(raw)
 
 
-async def _main_extract(reports: list[str], expected: set, config: Config) -> dict:
-    """اصلي کال د سرلیکونو + موقعیت لپاره، د بیا-هڅې سره چې کومه ژبه ورکه نشي.
+async def _main_extract(reports: list[str], config: Config) -> dict:
+    """اصلي کال د سرلیکونو + موقعیت لپاره، د بیا-هڅې سره چې سرلیک ورک نشي.
 
-    Retry-and-merge: repeats the main call until every expected language has a
-    non-empty paragraph and a location, or attempts run out. Missing pieces are
-    filled from a later attempt (so a one-off omission is self-healing).
+    Retry-and-merge keyed on the number of reports: repeat until we have at
+    least as many non-empty paragraphs as reports (plus a location), or attempts
+    run out. Titles come ONLY from Gemini's verbatim first paragraph — there is
+    no code fallback that could dump a whole report into the title.
     """
+    n_reports = len(reports)
     raw: dict = {}
+    last_error: Exception | None = None
     for attempt in range(1, _MAX_MAIN_ATTEMPTS + 1):
         try:
             parsed = _parse_json(await _cascade(build_prompt(reports), config))
         except Exception as err:  # noqa: BLE001
+            last_error = err
             logger.warning("اصلي کال هڅه %d ناکام: %s", attempt, err)
-            parsed = {}
+            continue
         for lg in ("ps", "fa", "en"):
             if not (raw.get(f"text_{lg}") or "").strip() and (parsed.get(f"text_{lg}") or "").strip():
                 raw[f"text_{lg}"] = parsed[f"text_{lg}"]
         if not raw.get("location") and (parsed.get("location") or "").strip():
             raw["location"] = parsed["location"]
-        done = all((raw.get(f"text_{lg}") or "").strip() for lg in expected) and raw.get("location")
-        if done:
+        got = sum(1 for lg in ("ps", "fa", "en") if (raw.get(f"text_{lg}") or "").strip())
+        if got >= n_reports and raw.get("location"):
             break
         if attempt < _MAX_MAIN_ATTEMPTS:
-            logger.warning("تایید: ځینې برخې ناقصې — بیا هڅه (%d/%d)", attempt, _MAX_MAIN_ATTEMPTS)
+            logger.warning("تایید: %d/%d سرلیکونه ترلاسه — بیا هڅه", got, n_reports)
+
+    if not any((raw.get(f"text_{lg}") or "").strip() for lg in ("ps", "fa", "en")):
+        raise RuntimeError(f"د اصلي تحلیل کوم سرلیک ترلاسه نشو: {last_error}")
     return raw
 
 
 async def analyze(texts: list[str], config: Config) -> dict:
-    """بشپړ، اطمیناني تحلیل — عنوان تل موجود، موقعیت سم، سرچینه معنوي.
+    """بشپړ تحلیل — سرلیک (کټ مټ، یوازې د Gemini لومړی پاراګراف) + موقعیت + سرچینه.
 
-    Language is detected in code (reliable), so we always know which languages
-    to expect. The main call (with retry) provides verbatim titles + location;
-    any title the model still omits falls back to the report's first line, so a
-    title is **never** missing. Source uses the dedicated prompt. Finally
-    ``verify_result`` checks the whole result before it is returned.
+    Titles come only from Gemini's verbatim first paragraph (with retry so a
+    one-off omission self-heals); a language with no paragraph is simply left
+    out (its image is skipped). Source uses the dedicated prompt with the
+    per-language default. verify_result logs any anomaly before returning.
     """
     if not config.gemini_api_keys:
         raise RuntimeError("د Gemini هیڅ کیلي نه ده تنظیم شوې (GEMINI_API_KEYS).")
 
     reports = [t.strip() for t in texts if t.strip()]
-    per_lang = map_reports(reports)  # {lang: raw_text}
-    expected = set(per_lang)
-
-    raw = await _main_extract(reports, expected, config)
+    raw = await _main_extract(reports, config)
     result: dict = {"location": _normalize_location(raw.get("location", ""))}
 
+    present: dict = {}
     for lang in ("ps", "fa", "en"):
-        if lang not in per_lang:
-            result[f"title_{lang}"] = ""
-            result[f"source_{lang}"] = ""
-            continue
         para = (raw.get(f"text_{lang}") or "").strip()
-        if not para:
-            # اطمیناني fallback — عنوان هیڅکله ورک نشي.
-            para = first_paragraph(per_lang[lang])
-            logger.warning("[%s] Gemini سرلیک ورنکړ — د کوډ لومړی لاین وکارول شو", lang)
         _, title = _split_source_title(para)
         result[f"title_{lang}"] = title
+        if not para:
+            result[f"source_{lang}"] = ""
+            continue
+        present[lang] = para
         # سرچینه د بشپړ راپور څخه (اختصاصي پرامپټ) + د ژبې ډیفالټ که ونه موندل شي.
+        full = _match_full_text(para, reports)
         try:
-            src = await extract_source(per_lang[lang], config)
+            src = await extract_source(full, config)
         except Exception as err:  # noqa: BLE001 - سرچینه اختیاري ده
             logger.warning("[%s] د سرچینې استخراج ناکام: %s", lang, err)
             src = ""
         result[f"source_{lang}"] = src or _DEFAULT_SOURCE[lang]
 
-    verify_result(result, per_lang)
+    verify_result(result, present)
     return result
