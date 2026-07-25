@@ -417,6 +417,29 @@ async def _main_extract(reports: list[str], config: Config) -> dict:
     return raw
 
 
+def _first_paragraph_block(text: str) -> str:
+    """لومړی پاراګراف (تر لومړۍ تشې کرښې)؛ که یو پاراګراف وو، ټول متن."""
+    blocks = re.split(r"\n\s*\n", text.strip())
+    return blocks[0].strip() if blocks else text.strip()
+
+
+def extract_urgent_titles(texts: list[str]) -> dict:
+    """د عاجل خبر عنوانونه — **بې AI**، په کوډ کې.
+
+    Urgent needs no AI: title = the first paragraph (whole report if it is a
+    single paragraph), with any trailing period removed. Language is detected in
+    code. Returns {lang: title}.
+    """
+    titles: dict = {}
+    for lang, raw in map_reports([t for t in texts if t.strip()]).items():
+        title = _first_paragraph_block(raw)
+        # د پای «.» (یا عربي ۔ / ｡) لرې کړه.
+        title = title.rstrip().rstrip(".۔｡。").rstrip()
+        if title:
+            titles[lang] = title
+    return titles
+
+
 async def extract_titles(texts: list[str], config: Config) -> dict:
     """یوازې سرلیکونه راوباسه (د عاجل خبر لپاره — بې سرچینې/موقعیت).
 

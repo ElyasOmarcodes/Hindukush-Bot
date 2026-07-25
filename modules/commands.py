@@ -374,8 +374,8 @@ async def run_urgent_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) 
         pkg_dir = save_package(state)
         texts = collect_texts(state)
 
-        await prog.step(1)  # جیمنای — یوازې سرلیکونه
-        titles = await gemini.extract_titles(texts, state.config)
+        await prog.step(1)  # عاجل — بې AI، عنوان په کوډ کې راوباسه
+        titles = gemini.extract_urgent_titles(texts)
         if not titles:
             raise RuntimeError("هیڅ سرلیک ترلاسه نشو")
 

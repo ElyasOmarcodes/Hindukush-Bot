@@ -57,6 +57,7 @@
     "highlight_fraction": 0.45,
     "normal_color_hex": "FFFFFF",
 
+    "output_size": 1920,
     "jpeg_quality_max": 96,
     "jpeg_quality_min": 92,
     "target_kb": 1600,
@@ -70,7 +71,7 @@
     "urgent_highlight_color_hex": "DA0404",
     "urgent_highlight_fraction": 0.40,
     "urgent_date_font": "couriernew.ttf",
-    "urgent_date_size": 45,
+    "urgent_date_size": 60,
     "urgent_date_color_hex": "DA0404"
   }
 }

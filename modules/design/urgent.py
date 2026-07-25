@@ -15,6 +15,7 @@ from PIL import Image, ImageDraw
 from ..config import Config
 from ..utils import sanitize_filename
 from .export import export_image
+from .justify import justify_line
 from .layout import URGENT_DATE_BOX, URGENT_TEMPLATES, URGENT_TITLE_BOX
 from .text_render import (
     _direction,
@@ -86,24 +87,34 @@ def _draw_title(canvas, text: str, font_path: str, dcfg, is_english: bool) -> No
     y = by + (bh - len(lines) * lh) // 2  # عمودي مرکز
     gi = 0
     for i, line in enumerate(lines):
+        is_last = i == len(lines) - 1
+        # RTL (پښتو/فارسي) نا-وروستۍ کرښه → کشیده justify (زموږ منطق).
+        if not is_english and not is_last:
+            line = justify_line(line, lambda t: text_width(font, t, is_english), bw, seed=i)
         words = line.split()
         widths = [text_width(font, w, is_english) for w in words]
-        is_last = i == len(lines) - 1
+        # انګلیسي نا-وروستۍ کرښه → د فاصلې justify؛ نور (کشیده-شوی یا وروستی) → مرکز.
         gi = _draw_line(
             draw, words, widths, font, box, y, is_english,
-            justify=(not is_last and len(words) > 1),
+            justify=(is_english and not is_last and len(words) > 1),
             gi=gi, start_idx=start_idx, normal=normal, highlight=highlight,
         )
         y += lh
 
 
 def _draw_date(canvas, date_str: str, font_path: str, dcfg) -> None:
-    """تاریخ ورسموه — چپ-مرکز، سور، couriernew."""
+    """تاریخ ورسموه — چپ-مرکز، سور، بولډ (couriernew regular دی نو faux-bold)."""
     bx, by, bw, bh = URGENT_DATE_BOX
-    font = get_font(font_path, dcfg.urgent_date_size)
+    size = dcfg.urgent_date_size
+    font = get_font(font_path, size)
     draw = ImageDraw.Draw(canvas)
     color = parse_color(dcfg.urgent_date_color_hex)
-    draw.text((bx, by + bh // 2), date_str, font=font, fill=color, anchor="lm")
+    # couriernew.ttf regular دی — د بولډ لپاره stroke_width ورکوو.
+    stroke = max(1, round(size / 28))
+    draw.text(
+        (bx, by + bh // 2), date_str, font=font, fill=color, anchor="lm",
+        stroke_width=stroke, stroke_fill=color,
+    )
 
 
 def render_urgent_one(lang: str, title: str, config: Config, out_dir) -> Path:

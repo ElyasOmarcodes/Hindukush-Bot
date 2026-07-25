@@ -300,6 +300,36 @@ def test_urgent_config_values():
     assert cfg.design.urgent_date_color_hex == "DA0404"
 
 
+def test_extract_urgent_titles_code_only():
+    reports = ["د کابل خبر لومړی ښکاره.\n\nدوهم پاراګراف", "این خبر فارسی است.", "English headline."]
+    t = gemini.extract_urgent_titles(reports)
+    assert t["ps"] == "د کابل خبر لومړی ښکاره"   # body dropped, period removed
+    assert t["fa"] == "این خبر فارسی است"
+    assert t["en"] == "English headline"
+
+
+def test_kashida_justify_fills_width():
+    from modules.design.justify import justify_line, TATWEEL
+    line = "دا یوه پښتو کرښه ده چې کشیده اخلي"
+    # measure = char count as a stand-in for width
+    out = justify_line(line, lambda t: len(t), target_w=len(line) + 6)
+    assert TATWEEL in out
+    assert len(out) >= len(line)
+
+
+def test_kashida_not_applied_to_english_measure():
+    from modules.design.justify import justify_line, TATWEEL
+    # لاتین متن کوم slot نلري → بې بدلون
+    out = justify_line("English text here", lambda t: len(t), target_w=100)
+    assert TATWEEL not in out
+
+
+def test_output_size_config():
+    cfg = load_config("config/settings.json")
+    assert cfg.design.output_size == 1920
+    assert cfg.design.urgent_date_size == 60
+
+
 def test_jalali_date_format():
     from modules.design.urgent import current_jalali_date
     d = current_jalali_date()
@@ -313,7 +343,7 @@ def test_render_urgent_produces_1561_image(tmp_path):
     cfg = load_config("config/settings.json")
     p = render_urgent_one("ps", "د ازموینې لپاره یو عاجل سرلیک دلته دی", cfg, tmp_path)
     assert p.exists()
-    assert Image.open(p).size == (1561, 1561)
+    assert Image.open(p).size == (1920, 1920)  # output_size
 
 
 def test_botstate_mode_default_news():
@@ -394,4 +424,4 @@ def test_render_all_produces_three_images(tmp_path):
     assert len(paths) == 3
     for p in paths:
         assert p.exists()
-        assert Image.open(p).size == (1650, 1650)
+        assert Image.open(p).size == (1920, 1920)  # output_size

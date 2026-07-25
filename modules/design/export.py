@@ -27,6 +27,12 @@ def export_image(canvas, out_dir: str | Path, title: str, dcfg: DesignConfig) ->
     name = sanitize_filename(title) if title.strip() else "untitled"
     path = out_dir / f"{name}.jpg"
 
+    # وروستۍ اندازه (1920) ته resize — دواړه خبر او عاجل یو شان اندازه.
+    out_size = getattr(dcfg, "output_size", 0)
+    if out_size and canvas.size != (out_size, out_size):
+        from PIL import Image
+        canvas = canvas.resize((out_size, out_size), Image.LANCZOS)
+
     rgb = canvas.convert("RGB")  # JPEG شفافیت نه مني
     target = dcfg.target_kb * 1024
     qualities = list(range(dcfg.jpeg_quality_max, dcfg.jpeg_quality_min - 1, -3))

@@ -51,6 +51,8 @@ class DesignConfig:
     highlight_fraction: float = 0.45
     normal_color_hex: str = "FFFFFF"
 
+    # د وروستي خروجي اندازه (px) — دواړه خبر او عاجل دې اندازې ته resize کیږي.
+    output_size: int = 1920
     # د خروجي کیفیت — نږدې بې-تاوانه (FullHD)، optimize + progressive حجم کموي.
     jpeg_quality_max: int = 96
     jpeg_quality_min: int = 92
@@ -66,7 +68,7 @@ class DesignConfig:
     urgent_highlight_color_hex: str = "DA0404"
     urgent_highlight_fraction: float = 0.40  # اخیري ۳۵–۴۵٪
     urgent_date_font: str = "couriernew.ttf"
-    urgent_date_size: int = 45
+    urgent_date_size: int = 60
     urgent_date_color_hex: str = "DA0404"
 
     @property
