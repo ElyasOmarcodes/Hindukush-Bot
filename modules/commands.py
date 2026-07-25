@@ -23,11 +23,12 @@ from telegram import (
 from telegram.ext import ContextTypes
 
 from . import gemini
+from .design import quote as design_quote
 from .design import render as design_render
 from .design import urgent as design_urgent
 from .design.layout import LANGS
 from .package import BotState, collect_texts, save_package, validate_package
-from .progress import URGENT_PROGRESS_STEPS, Progress
+from .progress import QUOTE_PROGRESS_STEPS, URGENT_PROGRESS_STEPS, Progress
 
 logger = logging.getLogger("commands")
 
@@ -129,8 +130,13 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             reply_markup=active_keyboard(),
         )
     elif text == BTN_QUOTE:
+        state.reset()
+        state.mode = "quote"
+        state.listening = True
+        logger.info("د نقل قول حالت فعال شو (بټن)")
         await update.effective_message.reply_text(
-            "⏳ دا برخه اوس غیر فعاله ده — راتلونکې کې به فعاله شي."
+            "💬 د نقل قول حالت فعال شو — د شخص انځور + تر ۳ راپورونه ولیږئ، بیا «✅ بشپړول» ووهئ.",
+            reply_markup=active_keyboard(),
         )
     elif text == BTN_BACK:
         state.reset()
@@ -322,6 +328,9 @@ async def run_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None
     if state.mode == "urgent":
         await run_urgent_pipeline(context, chat_id)
         return
+    if state.mode == "quote":
+        await run_quote_pipeline(context, chat_id)
+        return
 
     state.processing = True
     prog = Progress(context.bot, chat_id, min_interval=state.config.design.progress_min_interval)
@@ -394,6 +403,66 @@ async def run_urgent_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) 
         await prog.finish(ok=True)
     except Exception as err:  # noqa: BLE001
         logger.error("د عاجل pipeline خطا: %s", err, exc_info=True)
+        await prog.finish(ok=False, err=str(err))
+    finally:
+        state.reset()
+        state.listening = False
+        state.mode = "news"
+        await context.bot.send_message(
+            chat_id, "✅ بشپړ شو — د نوي پکیج لپاره «🛠 جوړول» ووهئ.",
+            reply_markup=main_keyboard(),
+        )
+
+
+async def _render_quotes(context, quotes: dict, person, pkg_dir: Path, state: BotState, prog: Progress) -> list[Path]:
+    """د نقل قول انځورونه (شخص + نقل قول + نوم + رتبه) په executor کې جوړ کړه."""
+    loop = asyncio.get_running_loop()
+    paths: list[Path] = []
+    for lang, d in quotes.items():
+        await prog.step(_URGENT_LANG_STEP.get(lang, 2))
+        try:
+            path = await loop.run_in_executor(
+                None, design_quote.render_quote_one,
+                lang, d["quote"], d["name"], d["rank"], person, state.config, pkg_dir,
+            )
+            paths.append(path)
+        except Exception as err:  # noqa: BLE001
+            logger.error("[%s] د نقل قول ډیزاین ناکامي: %s", lang, err, exc_info=True)
+    return paths
+
+
+async def run_quote_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
+    """د نقل قول pipeline: ساتل → نوم/رتبه/نقل قول → ډیزاین → لیږل → منو."""
+    state = _state(context)
+    state.processing = True
+    prog = Progress(
+        context.bot, chat_id,
+        min_interval=state.config.design.progress_min_interval,
+        steps=QUOTE_PROGRESS_STEPS,
+    )
+    await prog.start()
+    try:
+        await prog.step(0)
+        pkg_dir = save_package(state)
+        texts = collect_texts(state)
+
+        await prog.step(1)  # Gemini — نوم/رتبه/نقل قول
+        quotes = await gemini.analyze_quote(texts, state.config)
+        if not quotes:
+            raise RuntimeError("هیڅ نقل قول ترلاسه نشو")
+
+        news_img = pkg_dir / "image.jpg"
+        person = str(news_img) if news_img.exists() else None
+        paths = await _render_quotes(context, quotes, person, pkg_dir, state, prog)
+        if not paths:
+            raise RuntimeError("هیڅ نقل قول انځور جوړ نشو")
+
+        await prog.step(5)  # لیږل
+        await _send_designs(context, chat_id, paths)
+        logger.info("%d نقل قول انځورونه ولیږل شول", len(paths))
+        await prog.finish(ok=True)
+    except Exception as err:  # noqa: BLE001
+        logger.error("د نقل قول pipeline خطا: %s", err, exc_info=True)
         await prog.finish(ok=False, err=str(err))
     finally:
         state.reset()

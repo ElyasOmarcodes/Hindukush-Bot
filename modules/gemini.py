@@ -156,6 +156,25 @@ Now, extract the source from the following text:
 
 """
 
+# د نقل قول اختصاصي پرامپټ — نوم + رتبه + نقل قول راباسي (کټ مټ).
+QUOTE_PROMPT = """Role: Expert Linguistic Analyst and Media Monitor.
+Task: Analyze the text and extract entities in JSON format.
+
+RULES FOR EXTRACTION:
+1. LANGUAGE: The extracted 'name' and 'rank' MUST be in the SAME language as the input text (e.g., Pashto input -> Pashto output).
+2. DEEP SEARCH ('name' & 'rank'): Scan the ENTIRE text to find the correct name and title/rank. They might appear in the 1st, 2nd, or last paragraph.
+3. QUOTE LOGIC (CRITICAL):
+   - Target ONLY the FIRST paragraph (or headline).
+   - Case A: If 1st paragraph starts with 'Name/Rank says: ...', REMOVE the name/rank introduction and keep the rest of the sentence EXACTLY VERBATIM.
+   - Case B: If 1st paragraph is just the statement, keep it 100% IDENTICAL (Verbatim).
+   - Do NOT edit, summarize, or change words in the 'quote'.
+
+OUTPUT FORMAT: Return raw JSON only: { "name": "...", "rank": "...", "quote": "..." }
+NO Markdown formatting.
+
+Input Text:
+"""
+
 
 def build_prompt(texts: list[str]) -> str:
     """د راپورونو لیست د تحلیل پرامپټ ته واړوه.  Build the analysis prompt."""
@@ -438,6 +457,36 @@ def extract_urgent_titles(texts: list[str]) -> dict:
         if title:
             titles[lang] = title
     return titles
+
+
+async def extract_quote(text: str, config: Config) -> dict:
+    """د یوه راپور څخه {name, rank, quote} د اختصاصي پرامپټ له لارې راوباسه."""
+    raw = await _cascade(QUOTE_PROMPT + text.strip(), config)
+    data = _parse_json(raw)
+    return {
+        "name": (data.get("name") or "").strip(),
+        "rank": (data.get("rank") or "").strip(),
+        "quote": (data.get("quote") or "").strip(),
+    }
+
+
+async def analyze_quote(texts: list[str], config: Config) -> dict:
+    """د نقل قول لپاره — هر راپور (ژبه) څخه {name, rank, quote} راوباسه.
+
+    Returns {lang: {name, rank, quote}} for languages whose quote is non-empty.
+    """
+    if not config.gemini_api_keys:
+        raise RuntimeError("د Gemini هیڅ کیلي نه ده تنظیم شوې (GEMINI_API_KEYS).")
+    result: dict = {}
+    for lang, raw in map_reports([t for t in texts if t.strip()]).items():
+        try:
+            data = await extract_quote(raw, config)
+        except Exception as err:  # noqa: BLE001 - یوه ژبه نه باید نور ودروي
+            logger.warning("[%s] د نقل قول استخراج ناکام: %s", lang, err)
+            continue
+        if data.get("quote"):
+            result[lang] = data
+    return result
 
 
 async def extract_titles(texts: list[str], config: Config) -> dict:

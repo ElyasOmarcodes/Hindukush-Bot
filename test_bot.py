@@ -324,6 +324,20 @@ def test_kashida_not_applied_to_english_measure():
     assert TATWEEL not in out
 
 
+def test_quote_prompt_and_parse():
+    assert "VERBATIM" in gemini.QUOTE_PROMPT
+    assert '"name"' in gemini.QUOTE_PROMPT and '"quote"' in gemini.QUOTE_PROMPT
+    # د تمه شوي JSON بڼه پارس کیږي.
+    d = gemini._parse_json('{"name": "جوزپ بورېل", "rank": "مسوول", "quote": "خبر دلته دی"}')
+    assert d["name"] == "جوزپ بورېل" and d["quote"] == "خبر دلته دی"
+
+
+def test_quote_progress_uses_gemini_step():
+    from modules.progress import QUOTE_PROGRESS_STEPS
+    labels = " ".join(label for _icon, label in QUOTE_PROGRESS_STEPS)
+    assert "نقل قول" in labels
+
+
 def test_quote_layout_and_config():
     from modules.design.layout import (
         QUOTE_TEMPLATES, QUOTE_PERSON_BOX, QUOTE_TITLE_BOX, QUOTE_NAME_BOX, QUOTE_RANK_BOX,
