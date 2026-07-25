@@ -86,8 +86,17 @@ def find_best_size(text: str, font_path: str, box: tuple, is_english: bool, dcfg
         lh = line_height(get_font(font_path, size), dcfg.title_line_gap)
         if len(lines) * lh <= box_h:
             return size, lines
+    # حتی په min سایز کې هم ونه ځایېد → د باکس دننه کلیپ کړه (اطمیناني، بې اوورفلو).
     lines = wrap_text(text, font_path, min_size, box_w, is_english)
-    logger.warning("عنوان په %dpx کې هم ونه ځایېد — %d کرښې", min_size, len(lines))
+    lh = line_height(get_font(font_path, min_size), dcfg.title_line_gap)
+    max_lines = max(1, box_h // lh)
+    if len(lines) > max_lines:
+        logger.warning(
+            "عنوان اوږد و (%d کرښې) — تر %d پورې کلیپ شو چې له باکس ونه وځي",
+            len(lines), max_lines,
+        )
+        lines = lines[:max_lines]
+        lines[-1] = lines[-1].rstrip() + "..."
     return min_size, lines
 
 
