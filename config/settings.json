@@ -44,6 +44,7 @@
     "title_normal_min": 65,
     "title_normal_max": 79,
     "title_extended_min": 58,
+    "title_abs_min": 20,
     "title_valign": "top",
     "title_line_gap": 15,
 

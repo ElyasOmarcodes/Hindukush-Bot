@@ -31,9 +31,12 @@ class DesignConfig:
     photo_fit: str = "stretch"  # "stretch" | "cover"
 
     title_target_size: int = 72
-    title_normal_min: int = 65
+    title_normal_min: int = 65   # غوره کوچنی حد (پښتو/فارسي)
     title_normal_max: int = 79
-    title_extended_min: int = 58  # ⚠️ یوازې انګلیسي
+    title_extended_min: int = 58  # غوره کوچنی حد (انګلیسي)
+    # مطلق کوچنی حد — که عنوان اوږد وي، سایز تر دې پورې کوچنی کیږي چې ټول ځای شي
+    # (هیڅکله کلیپ نه کوو — تل ټول عنوان ښکاره کوو).
+    title_abs_min: int = 20
     title_valign: str = "top"     # "top" | "middle"
     # د عنوان د لاینونو ترمنځ فاصله (px) — د فونټ طبیعي لوړوالي سربېره.
     title_line_gap: int = 15

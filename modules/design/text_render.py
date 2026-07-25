@@ -78,26 +78,26 @@ def wrap_text(text: str, font_path: str, size: int, max_w: int, is_english: bool
 
 
 def find_best_size(text: str, font_path: str, box: tuple, is_english: bool, dcfg: DesignConfig):
-    """له TARGET پیل، تر min پورې کوچنی کوه چې متن د باکس دننه ځایېږي."""
+    """له TARGET پیل، سایز کوچنی کوه ترڅو **ټول** عنوان د باکس دننه ځای شي.
+
+    Rule: never clip. Shrink the font until the whole title fits. The
+    language-specific minimum (65 / 58) is only the *preferred* floor — for an
+    over-long title we keep shrinking down to ``title_abs_min`` so the full
+    text is always shown inside the box.
+    """
     _, _, box_w, box_h = box
-    min_size = dcfg.title_extended_min if is_english else dcfg.title_normal_min
-    for size in range(dcfg.title_target_size, min_size - 1, -1):
+    pref_min = dcfg.title_extended_min if is_english else dcfg.title_normal_min
+    abs_min = min(dcfg.title_abs_min, pref_min)
+    for size in range(dcfg.title_target_size, abs_min - 1, -1):
         lines = wrap_text(text, font_path, size, box_w, is_english)
         lh = line_height(get_font(font_path, size), dcfg.title_line_gap)
         if len(lines) * lh <= box_h:
+            if size < pref_min:
+                logger.info("عنوان اوږد و — سایز تر %dpx ښکته شو چې ټول ځای شي", size)
             return size, lines
-    # حتی په min سایز کې هم ونه ځایېد → د باکس دننه کلیپ کړه (اطمیناني، بې اوورفلو).
-    lines = wrap_text(text, font_path, min_size, box_w, is_english)
-    lh = line_height(get_font(font_path, min_size), dcfg.title_line_gap)
-    max_lines = max(1, box_h // lh)
-    if len(lines) > max_lines:
-        logger.warning(
-            "عنوان اوږد و (%d کرښې) — تر %d پورې کلیپ شو چې له باکس ونه وځي",
-            len(lines), max_lines,
-        )
-        lines = lines[:max_lines]
-        lines[-1] = lines[-1].rstrip() + "..."
-    return min_size, lines
+    # ډیر نادر حالت: حتی په مطلق کوچني سایز کې هم — همدا وکاروه (غوره هڅه).
+    logger.warning("عنوان ډیر اوږد و — د %dpx مطلق کوچني سایز سره", abs_min)
+    return abs_min, wrap_text(text, font_path, abs_min, box_w, is_english)
 
 
 def draw_title(canvas, text: str, font_path: str, box: tuple, is_english: bool, dcfg: DesignConfig) -> None:
