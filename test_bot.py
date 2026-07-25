@@ -324,10 +324,17 @@ def test_kashida_not_applied_to_english_measure():
     assert TATWEEL not in out
 
 
+def test_urgent_progress_has_no_gemini():
+    from modules.progress import URGENT_PROGRESS_STEPS
+    labels = " ".join(label for _icon, label in URGENT_PROGRESS_STEPS)
+    assert "جیمنای" not in labels
+    assert "سرلیکونه" in labels
+
+
 def test_output_size_config():
     cfg = load_config("config/settings.json")
     assert cfg.design.output_size == 1920
-    assert cfg.design.urgent_date_size == 60
+    assert cfg.design.urgent_date_size == 54
 
 
 def test_jalali_date_format():

@@ -71,7 +71,7 @@
     "urgent_highlight_color_hex": "DA0404",
     "urgent_highlight_fraction": 0.40,
     "urgent_date_font": "couriernew.ttf",
-    "urgent_date_size": 60,
+    "urgent_date_size": 54,
     "urgent_date_color_hex": "DA0404"
   }
 }

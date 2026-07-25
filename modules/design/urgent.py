@@ -89,14 +89,14 @@ def _draw_title(canvas, text: str, font_path: str, dcfg, is_english: bool) -> No
     for i, line in enumerate(lines):
         is_last = i == len(lines) - 1
         # RTL (پښتو/فارسي) نا-وروستۍ کرښه → کشیده justify (زموږ منطق).
+        # انګلیسي → هیڅ justify نه؛ ټول لاینونه مرکز (center-center).
         if not is_english and not is_last:
             line = justify_line(line, lambda t: text_width(font, t, is_english), bw, seed=i)
         words = line.split()
         widths = [text_width(font, w, is_english) for w in words]
-        # انګلیسي نا-وروستۍ کرښه → د فاصلې justify؛ نور (کشیده-شوی یا وروستی) → مرکز.
         gi = _draw_line(
             draw, words, widths, font, box, y, is_english,
-            justify=(is_english and not is_last and len(words) > 1),
+            justify=False,  # انګلیسي justify نه کوي؛ RTL کشیده دمخه ډک کړی
             gi=gi, start_idx=start_idx, normal=normal, highlight=highlight,
         )
         y += lh

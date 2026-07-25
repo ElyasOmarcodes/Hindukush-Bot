@@ -68,7 +68,7 @@ class DesignConfig:
     urgent_highlight_color_hex: str = "DA0404"
     urgent_highlight_fraction: float = 0.40  # اخیري ۳۵–۴۵٪
     urgent_date_font: str = "couriernew.ttf"
-    urgent_date_size: int = 60
+    urgent_date_size: int = 54
     urgent_date_color_hex: str = "DA0404"
 
     @property

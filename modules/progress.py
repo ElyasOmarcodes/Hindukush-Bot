@@ -25,16 +25,28 @@ PROGRESS_STEPS = [
     ("✅", "بشپړ شو"),
 ]
 
+# د عاجل خبر پرمختګ — بې AI/جیمنای (عنوان په کوډ کې چمتو کیږي).
+URGENT_PROGRESS_STEPS = [
+    ("📥", "پکیج ترلاسه شو"),
+    ("📝", "سرلیکونه چمتو کیږي…"),
+    ("🎨", "پښتو ډیزاین جوړیږي…"),
+    ("🎨", "فارسي ډیزاین جوړیږي…"),
+    ("🎨", "انګلیسي ډیزاین جوړیږي…"),
+    ("📤", "ګروپ ته لیږل کیږي…"),
+    ("✅", "بشپړ شو"),
+]
+
 
 class Progress:
     """د یوه پیغام له لارې د پرمختګ ښودنه.  Single-message progress tracker."""
 
-    def __init__(self, bot, chat_id: int, min_interval: float = 1.0):
+    def __init__(self, bot, chat_id: int, min_interval: float = 1.0, steps=None):
         self.bot = bot
         self.chat_id = chat_id
         self.msg_id: int | None = None
         self.min_interval = min_interval
         self._last_edit = 0.0
+        self.steps = steps or PROGRESS_STEPS
 
     async def start(self) -> None:
         try:
@@ -53,7 +65,7 @@ class Progress:
         if self.msg_id is None:
             return
         lines = []
-        for i, (_icon, label) in enumerate(PROGRESS_STEPS):
+        for i, (_icon, label) in enumerate(self.steps):
             if i < idx:
                 lines.append(f"✅ {label}")
             elif i == idx:

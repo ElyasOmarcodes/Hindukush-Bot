@@ -27,12 +27,13 @@ from .design import render as design_render
 from .design import urgent as design_urgent
 from .design.layout import LANGS
 from .package import BotState, collect_texts, save_package, validate_package
-from .progress import Progress
+from .progress import URGENT_PROGRESS_STEPS, Progress
 
 logger = logging.getLogger("commands")
 
-# د هرې ژبې د پرمختګ ګام (د PROGRESS_STEPS index).
+# د هرې ژبې د پرمختګ ګام (index) — خبر او عاجل جلا لیستونه لري.
 _LANG_STEP = {"ps": 3, "fa": 4, "en": 5}
+_URGENT_LANG_STEP = {"ps": 2, "fa": 3, "en": 4}
 
 # ─────────────── د بوټ کیبورډ بټنې (منو) ───────────────
 # د دستورونو پر ځای ښکلې بټنې — چې غیر مسلکي کسان هم اسانه کار وکړي.
@@ -304,7 +305,7 @@ async def _render_urgent(context, titles: dict, pkg_dir: Path, state: BotState, 
     loop = asyncio.get_running_loop()
     paths: list[Path] = []
     for lang, title in titles.items():
-        await prog.step(_LANG_STEP.get(lang, 3))
+        await prog.step(_URGENT_LANG_STEP.get(lang, 2))
         try:
             path = await loop.run_in_executor(
                 None, design_urgent.render_urgent_one, lang, title, state.config, pkg_dir
@@ -367,7 +368,11 @@ async def run_urgent_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) 
     """د عاجل خبر pipeline: ساتل → سرلیکونه → عاجل ډیزاین → لیږل → منو."""
     state = _state(context)
     state.processing = True
-    prog = Progress(context.bot, chat_id, min_interval=state.config.design.progress_min_interval)
+    prog = Progress(
+        context.bot, chat_id,
+        min_interval=state.config.design.progress_min_interval,
+        steps=URGENT_PROGRESS_STEPS,
+    )
     await prog.start()
     try:
         await prog.step(0)
@@ -383,7 +388,7 @@ async def run_urgent_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) 
         if not paths:
             raise RuntimeError("هیڅ عاجل انځور جوړ نشو")
 
-        await prog.step(7)
+        await prog.step(5)  # لیږل
         await _send_designs(context, chat_id, paths)
         logger.info("%d عاجل انځورونه ولیږل شول", len(paths))
         await prog.finish(ok=True)
