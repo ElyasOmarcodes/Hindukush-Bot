@@ -324,6 +324,23 @@ def test_kashida_not_applied_to_english_measure():
     assert TATWEEL not in out
 
 
+def test_allowlist_configured():
+    cfg = load_config("config/settings.json")
+    assert cfg.admin_user_ids == [535727838, 5730846799, 8416890401]
+
+
+def test_funny_message_has_name():
+    from modules import funny
+    assert len(funny.FUNNY_MESSAGES) >= 10
+    msg = funny.random_message("احمد")
+    assert "احمد" in msg
+
+
+def test_quote_prompt_no_change_and_no_trailing_rules():
+    assert "even 1%" in gemini.QUOTE_PROMPT
+    assert "NO TRAILING PUNCTUATION" in gemini.QUOTE_PROMPT
+
+
 def test_quote_prompt_and_parse():
     assert "VERBATIM" in gemini.QUOTE_PROMPT
     assert '"name"' in gemini.QUOTE_PROMPT and '"quote"' in gemini.QUOTE_PROMPT

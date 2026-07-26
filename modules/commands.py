@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from pathlib import Path
 
 from telegram import (
@@ -20,9 +21,9 @@ from telegram import (
     ReplyKeyboardMarkup,
     Update,
 )
-from telegram.ext import ContextTypes
+from telegram.ext import ApplicationHandlerStop, ContextTypes
 
-from . import gemini
+from . import funny, gemini
 from .design import quote as design_quote
 from .design import render as design_render
 from .design import urgent as design_urgent
@@ -83,15 +84,48 @@ def _state(context: ContextTypes.DEFAULT_TYPE) -> BotState:
 
 
 def _is_authorized(state: BotState, update: Update) -> bool:
-    """که د اډمینانو لیست خالي وي، هرڅوک اجازه لري؛ نه نو یوازې اډمینان.
+    """که د مجازو لیست خالي وي، هرڅوک اجازه لري؛ نه نو یوازې هغه ID ګانې.
 
-    Empty admin list means everyone in the group may use commands.
+    Empty allow-list means everyone may use the bot.
     """
-    admins = state.config.admin_user_ids
-    if not admins:
+    allowed = state.config.admin_user_ids
+    if not allowed:
         return True
     user = update.effective_user
-    return bool(user and user.id in admins)
+    return bool(user and user.id in allowed)
+
+
+# د غیر مجازو کارونکو د ځواب throttle (فی کارونکی) چې flood ونشي.
+_FUNNY_COOLDOWN = 8.0
+
+
+async def gatekeeper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """د مجازو لیست پلي کوي — غیر مجاز کارونکي ته طنزي ځواب، بیا دروي.
+
+    Runs in the first handler group. Authorized users pass through; everyone
+    else gets a random funny reply (throttled) and the update stops here.
+    """
+    state = _state(context)
+    if _is_authorized(state, update):
+        return  # مجاز — نور handlers دې کار وکړي
+    user = update.effective_user
+    now = time.monotonic()
+    last = context.bot_data.setdefault("_funny_last", {})
+    if user and now - last.get(user.id, 0.0) >= _FUNNY_COOLDOWN:
+        last[user.id] = now
+        try:
+            name = user.mention_html() if user else "کاروونکی"
+            chat = update.effective_chat
+            if chat:
+                await context.bot.send_message(chat.id, funny.random_message(name), parse_mode="HTML")
+        except Exception as err:  # noqa: BLE001
+            logger.debug("د طنزي ځواب لیږل: %s", err)
+    if update.callback_query:
+        try:
+            await update.callback_query.answer("🚫 اجازه نلرې", show_alert=False)
+        except Exception:  # noqa: BLE001
+            pass
+    raise ApplicationHandlerStop
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

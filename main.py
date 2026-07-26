@@ -76,6 +76,10 @@ def build_application(config: Config) -> Application:
         chat_filter = filters.ALL
         logger.warning("TELEGRAM_GROUP_ID نه دی ټاکل شوی — ټول چټونه څارل کیږي (dev حالت)")
 
+    # ---- دروازه‌بان (group -1) — یوازې مجاز کارونکي پریږدي؛ نور طنزي ځواب اخلي.
+    app.add_handler(MessageHandler(chat_filter & filters.ALL, commands.gatekeeper), group=-1)
+    app.add_handler(CallbackQueryHandler(commands.gatekeeper), group=-1)
+
     # ---- دستورونه (د پاور-کاروونکو لپاره لا هم کار کوي) ----
     app.add_handler(CommandHandler("start", commands.cmd_start, filters=chat_filter))
     app.add_handler(CommandHandler("menu", commands.cmd_start, filters=chat_filter))

@@ -168,6 +168,10 @@ RULES FOR EXTRACTION:
    - Case A: If 1st paragraph starts with 'Name/Rank says: ...', REMOVE the name/rank introduction and keep the rest of the sentence EXACTLY VERBATIM.
    - Case B: If 1st paragraph is just the statement, keep it 100% IDENTICAL (Verbatim).
    - Do NOT edit, summarize, or change words in the 'quote'.
+4. ZERO CHANGES: The 'quote' must NOT be altered even 1%. It is written by
+   professional journalists — never reword, translate, fix, or paraphrase it.
+5. NO TRAILING PUNCTUATION: The 'quote' must NOT end with a trailing period or
+   exclamation mark (e.g. '.', '!', '۔'). If the sentence ends with one, remove it.
 
 OUTPUT FORMAT: Return raw JSON only: { "name": "...", "rank": "...", "quote": "..." }
 NO Markdown formatting.
@@ -463,10 +467,13 @@ async def extract_quote(text: str, config: Config) -> dict:
     """د یوه راپور څخه {name, rank, quote} د اختصاصي پرامپټ له لارې راوباسه."""
     raw = await _cascade(QUOTE_PROMPT + text.strip(), config)
     data = _parse_json(raw)
+    quote = (data.get("quote") or "").strip()
+    # د پای اضافي «.!۔؟。！» لرې کړه (خوندي شبکه — د متن نور برخې ته لاس نه ورکوي).
+    quote = quote.rstrip(" .!۔؟。！?").rstrip()
     return {
         "name": (data.get("name") or "").strip(),
         "rank": (data.get("rank") or "").strip(),
-        "quote": (data.get("quote") or "").strip(),
+        "quote": quote,
     }
 
 
