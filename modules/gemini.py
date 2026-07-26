@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from itertools import permutations
 
 from .config import Config
 
@@ -313,23 +314,68 @@ _DEFAULT_SOURCE = {"ps": "راپورونه", "fa": "گزارش‌ها", "en": "R
 
 _VALID_LOCATIONS = ("Afghanistan", "Region", "Middle East", "World")
 
-# د پښتو ځانګړي توري چې فارسي یې نه کاروي — د ژبې پیژندنې لپاره.
+# ─────────── د ژبې پیژندنه (پښتو / فارسي / انګلیسي) ───────────
+# عاجل راپورونه اکثر لنډ وي، نو یوازې «ځانګړي توري» بس نه دي — د توریو تر څنګ
+# د دواړو ژبو د **عام کلمو** نښې هم شمېرو، بیا تر ټولو لوړ نمره ژبه ټاکو.
+
+# یوازې پښتو دا توري کاروي (فارسي یې نه لري).
+_PASHTO_LETTERS = set("ښږڅځډړټڼېۍګ")
+# یوازې فارسي دا توري کاروي (پښتو د دې پر ځای «ګ» U+06AB کاروي).
+_PERSIAN_LETTERS = set("گ")
+# (زوړ نوم — لا هم د شاته-سمون لپاره ساتل شوی)
 _PASHTO_MARKERS = "ښږڅځډړټڼ"
+
+# د دواړو ژبو عام او **نه-شریک** کلمې. شریکې کلمې (هم، نه، باید، پر…) قصداً نشته.
+_PASHTO_WORDS = {
+    "د", "په", "کې", "دی", "ده", "دي", "دې", "چې", "لپاره", "شوی", "شوې", "شول",
+    "وویل", "ویلي", "ته", "له", "سره", "څخه", "باندې", "پورې", "یې", "مو", "دا",
+    "هغه", "ټول", "اوس", "کوي", "کړي", "کړل", "کړه", "کړ", "خو", "ولې", "دغه",
+    "ډیر", "ډېر", "ښه", "وو", "لري", "نور", "خپل", "زموږ", "زمونږ", "موږ", "مونږ",
+    "وايي", "وایي", "پیښه", "ورځ", "کال", "هیواد", "هېواد", "ښار", "خلک", "نن",
+}
+_PERSIAN_WORDS = {
+    "در", "از", "به", "که", "این", "آن", "را", "است", "برای", "شد", "شده", "می",
+    "های", "هست", "هستند", "بود", "کرد", "کند", "کنیم", "کنند", "شود", "خود",
+    "یک", "با", "تا", "نیز", "اما", "ولی", "گفت", "اعلام", "کرده", "آنها", "ما",
+    "شما", "بین", "روی", "طبق", "اکنون", "همچنین", "دارد", "دارند", "پس", "چون",
+    "کشور", "شهر", "مردم", "امروز", "سال", "روز", "گزارش", "خبر", "وی", "او",
+}
 
 # د اصلي (main) کال د بیا-هڅې اعظمي شمیر — چې کومه ژبه بې سرلیکه پاتې نشي.
 _MAX_MAIN_ATTEMPTS = 3
 
 
+def language_scores(text: str) -> dict:
+    """د متن لپاره د هرې ژبې نمره — لوړه نمره = ډیر احتمال.
+
+    Score each language: Pashto/Persian exclusive letters (weight 3) plus
+    exclusive common words (weight 2). English wins outright on ASCII ratio.
+    Persian gets a small tie-break because Pashto text nearly always carries at
+    least one Pashto-only letter, while Persian carries none of them.
+    """
+    t = text.replace("‌", " ")  # ZWNJ = د کلمو بیلونکی (می‌کنیم → می کنیم)
+    letters = [c for c in t if c.isalpha()]
+    if not letters:
+        return {"ps": 0.0, "fa": 0.0, "en": 0.0}
+
+    ascii_ratio = sum(1 for c in letters if c.isascii()) / len(letters)
+    if ascii_ratio > 0.5:
+        return {"ps": 0.0, "fa": 0.0, "en": 10.0 + ascii_ratio}
+
+    words = re.findall(r"[^\W\d_]+", t, flags=re.UNICODE)
+    ps = 3 * sum(1 for c in t if c in _PASHTO_LETTERS)
+    ps += 2 * sum(1 for w in words if w in _PASHTO_WORDS)
+    fa = 3 * sum(1 for c in t if c in _PERSIAN_LETTERS)
+    fa += 2 * sum(1 for w in words if w in _PERSIAN_WORDS)
+    return {"ps": float(ps), "fa": fa + 0.5, "en": 0.0}
+
+
 def detect_language(text: str) -> str | None:
     """د متن ژبه په کوډ کې وپیژنه: en / ps / fa (یا None که تش وي)."""
-    letters = [c for c in text if c.isalpha()]
-    if not letters:
+    if not text.strip() or not any(c.isalpha() for c in text):
         return None
-    if sum(1 for c in letters if c.isascii()) / len(letters) > 0.5:
-        return "en"
-    if any(c in _PASHTO_MARKERS for c in text):
-        return "ps"
-    return "fa"
+    scores = language_scores(text)
+    return max(scores, key=lambda k: scores[k])
 
 
 def first_paragraph(text: str) -> str:
@@ -341,15 +387,27 @@ def first_paragraph(text: str) -> str:
 
 
 def map_reports(texts: list[str]) -> dict:
-    """هر راپور خپلې ژبې ته وټاکه — {lang: raw_text}. (یو راپور فی ژبه)."""
-    per: dict = {}
-    for t in texts:
-        t = t.strip()
-        if not t:
-            continue
-        lang = detect_language(t)
-        if lang and lang not in per:
-            per[lang] = t
+    """هر راپور خپلې ژبې ته وټاکه — {lang: raw_text}. (یو راپور فی ژبه).
+
+    ⚠️ هر راپور جلا نه پیژنو. ټول یوځای ګورو او هغه **ترکیب** غوره کوو چې ټوله
+    نمره یې تر ټولو لوړه وي. په دې سره دوه راپورونه هیڅکله یوه ژبه نه اخلي (پخوا
+    به دویم په چوپه خوله له منځه تللی وای)، او که یو راپور لږ مبهم و، د نورو
+    راپورونو شتون یې پریکړه سمه کوي — د لنډو عاجل راپورونو لپاره خورا مهم.
+    """
+    items = [t.strip() for t in texts if t.strip()][:3]
+    if not items:
+        return {}
+    scores = [language_scores(t) for t in items]
+    langs = ("ps", "fa", "en")
+
+    best, best_total = None, None
+    for perm in permutations(langs, len(items)):
+        total = sum(scores[i][perm[i]] for i in range(len(items)))
+        if best_total is None or total > best_total:
+            best_total, best = total, perm
+
+    per = {best[i]: items[i] for i in range(len(items))}
+    logger.info("د ژبو ټاکنه: %s", ", ".join(f"#{i + 1}→{best[i]}" for i in range(len(items))))
     return per
 
 

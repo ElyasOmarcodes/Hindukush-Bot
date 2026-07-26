@@ -11,9 +11,11 @@ from __future__ import annotations
 import random
 
 TATWEEL = "ـ"
-MAX_KASHIDA_PER_SLOT = 4
-# یوه‌کلمه‌یي کرښه د فاصلو له لارې نشي غزیدلی — نو کشیده یې ډیره اجازه لري.
-MAX_KASHIDA_SINGLE_WORD = 12
+# ښکلا لپاره غوره سقف — لومړی هڅه کوو چې هر slot تر دې پورې ډک شي.
+PREFERRED_KASHIDA_PER_SLOT = 4
+# مطلق سقف — که د کرښې ډکولو لپاره اړینه وه، سقف تر دې پورې لوړیږي.
+# ⚠️ اولیت **د لاین بشپړ ډکیدل** دي، نه دا سقف — د کلمو ترمنځ فاصله هیڅکله نه بدلوو.
+MAX_KASHIDA_PER_SLOT = 40
 
 # هغه توري چې کیڼ لور ته نه نښلي (کشیده نه اخلي کله چې کیڼ (a) وي).
 NON_CONNECTING_LEFT = set("ادذرزژوآأإءؤئةىٰ")
@@ -91,9 +93,13 @@ def justify_line(line: str, measure, target_w: float, seed: int | None = None) -
     ``measure(text) -> float`` عرض ورکوي (د راقم/فونټ له لارې). که کرښه دمخه پراخه
     وي یا کوم slot نه وي، همغه کرښه راګرځي.
 
-    ⚠️ کله چې یو slot تر target واوړي، **ټوله دوره نه ودریږي** — هغه slot یوازې
-    بند شي او نور slotونه هڅه کوي. په دې سره وروستۍ تشه تر ټولو وړه کیږي؛ پاتې
-    وړه تشه بیا د رسمولو پر مهال د کلمو ترمنځ ویشل کیږي (بشپړ justify).
+    منطق (دوه اصله):
+    ۱. **یو slot چې ډک شي، دوره نه ودریږي** — هغه بند شي او نور slotونه دوام کوي.
+    ۲. **سقف انعطاف لري** — لومړی هر slot تر ۴ کشیده ډکوو (ښکلا)، خو که کرښه لا
+       تشه وه، سقف پورته ځي (۸، ۱۲، …) ترڅو کرښه بشپړه ډکه شي. اولیت د لاین
+       ډکیدل دي — د کلمو ترمنځ فاصله **هیڅکله** نه بدلوو (زموږ قانون).
+
+    کشیده په دورو (round-robin) ویشل کیږي نو په ټولو slotونو کې برابره خپریږي.
     """
     if measure(line) >= target_w:
         return line
@@ -104,9 +110,8 @@ def justify_line(line: str, measure, target_w: float, seed: int | None = None) -
     order = slots[:]
     rng.shuffle(order)
     counts: dict = {s: 0 for s in slots}
-    # یوه‌کلمه‌یي کرښه وروسته د فاصلو له لارې نشي غزیدلی → کشیده ته ډیر ځای ورکړه.
-    cap = MAX_KASHIDA_SINGLE_WORD if len(line.split()) == 1 else MAX_KASHIDA_PER_SLOT
 
+    cap = PREFERRED_KASHIDA_PER_SLOT
     blocked: set = set()
     guard = 0
     while guard < 20000:
@@ -121,6 +126,11 @@ def justify_line(line: str, measure, target_w: float, seed: int | None = None) -
                 blocked.add(slot)
                 continue
             progressed = True
-        if not progressed:
-            break
+        if progressed:
+            continue
+        # پرمختګ ونه شو: که ځینې slotونه لا خلاص دي خو سقف یې مخه نیولې، سقف لوړ کړه.
+        if len(blocked) < len(slots) and cap < MAX_KASHIDA_PER_SLOT:
+            cap = min(cap + PREFERRED_KASHIDA_PER_SLOT, MAX_KASHIDA_PER_SLOT)
+            continue
+        break  # نور کشیده نه ځایېږي — کرښه تر ټولو ډکه ده
     return _build(line, counts)

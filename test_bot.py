@@ -348,13 +348,27 @@ def test_kashida_uses_every_slot_not_stopping_at_first_overshoot():
     assert len(out) <= target
 
 
-def test_kashida_single_word_line_gets_bigger_cap():
-    """یوه‌کلمه‌یي کرښه د فاصلو له لارې نشي غزیدلی → کشیده ډیره اجازه لري."""
-    from modules.design.justify import justify_line, MAX_KASHIDA_PER_SLOT
-    word = "امنیتي"
-    out = justify_line(word, lambda t: len(t), target_w=len(word) + 30)
-    # تر یوه slot × ۴ (زوړ سقف) زیات کشیده ور اضافه شوی.
-    assert len(out) - len(word) > MAX_KASHIDA_PER_SLOT
+def test_kashida_cap_grows_until_line_is_full():
+    """اولیت د لاین ډکیدل دي — که ۴ کشیده بس نه وې، سقف پورته ځي (۵، ۶، …)."""
+    from modules.design.justify import justify_line, PREFERRED_KASHIDA_PER_SLOT, TATWEEL
+    # یو slot لرونکې کرښه چې لویه تشه لري → تر «غوره سقف» زیات کشیده اړین دی.
+    line = "همه‌جانبه دست"
+    target = len(line) + 12
+    out = justify_line(line, lambda t: len(t), target_w=target)
+    assert out.count(TATWEEL) > PREFERRED_KASHIDA_PER_SLOT
+    assert target - len(out) <= 1          # کرښه بشپړه ډکه شوه
+    assert out.count(" ") == line.count(" ")  # فاصلې لا هم طبیعي دي
+
+
+def test_justify_never_stretches_word_spacing():
+    """زموږ قانون: د کلمو ترمنځ فاصله هیڅکله نه غزول کیږي — یوازې کشیده."""
+    from modules.design.justify import justify_line
+    line = "دا یوه پښتو کرښه ده چې کشیده اخلي"
+    out = justify_line(line, lambda t: len(t), target_w=len(line) + 25)
+    # کلمې هماغه دي، یوازې کشیده ور اضافه شوی؛ د فاصلو شمیر بدل نه دی.
+    assert out.count(" ") == line.count(" ")
+    assert "  " not in out
+    assert [w.replace("ـ", "") for w in out.split()] == line.split()
 
 
 def test_quote_sizes_from_settings_json():
@@ -366,6 +380,69 @@ def test_quote_sizes_from_settings_json():
     raw = json.loads(Path("config/settings.json").read_text(encoding="utf-8"))
     for key in ("quote_title_size", "quote_name_size", "quote_rank_size"):
         assert key in raw["design"], f"{key} باید په settings.json کې جلا درج وي"
+
+
+def test_long_rtl_filename_is_byte_capped():
+    """ext4 حد **په بایټ** دی — پښتو توری ۲ بایټه، نو ۱۵۰ توري = ۳۰۰ بایټه.
+
+    دا هغه ریښتینې ستونزه وه چې د عاجل خبر ډیزاین یې ماتوه (عاجل عنوان بشپړ
+    پاراګراف وي → اوږد نوم → OSError → «هیڅ عاجل انځور جوړ نشو»).
+    """
+    long_fa = ("تلاش می‌کنیم از طریق یک توافق امنیتی با اسرائیل به صلحی همه‌جانبه "
+               "دست یابیم و این یک متن طولانی برای آزمایش نام فایل است که باید "
+               "بیش از حد مجاز شود و خطا ندهد")
+    name = sanitize_filename(long_fa)
+    assert len(name.encode("utf-8")) <= 200
+    assert name and not name.endswith("_")
+    # واقعاً د لیکلو وړ دی (پخوا OSError: File name too long).
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        Path(td, name + ".jpg").write_text("x", encoding="utf-8")
+
+
+def test_urgent_language_detection_on_short_reports():
+    """عاجل راپورونه لنډ وي — پښتو او فارسي باید سره ګډ نشي."""
+    assert gemini.detect_language("دوه تنه ووژل شول") == "ps"
+    assert gemini.detect_language("دو نفر کشته شدند") == "fa"
+    assert gemini.detect_language("در شهر کابل انفجاری رخ داد") == "fa"
+    assert gemini.detect_language("د کابل په ښار کې چاودنه وشوه") == "ps"
+    assert gemini.detect_language("Two people were killed") == "en"
+
+
+def test_map_reports_never_collides_two_reports_into_one_language():
+    """دوه راپورونه هیڅکله یوه ژبه نه اخلي — پخوا به دویم چوپ ورک شوی و."""
+    out = gemini.map_reports(["دوه تنه ووژل شول", "دو نفر کشته شدند", "Two killed"])
+    assert set(out) == {"ps", "fa", "en"}
+    assert out["ps"] == "دوه تنه ووژل شول"
+    assert out["fa"] == "دو نفر کشته شدند"
+    # یو راپور یوازې → یوازې خپله ژبه.
+    assert gemini.map_reports(["دو نفر کشته شدند"]) == {"fa": "دو نفر کشته شدند"}
+    # درې راپورونه = درې جلا ژبې، هیڅ یو نه ورکیږي.
+    three = gemini.map_reports(["د کابل خبر دی", "این خبر کابل است", "Kabul news"])
+    assert len(three) == 3
+
+
+def test_urgent_titles_for_persian_only_package():
+    """یوازې فارسي راپور → یوازې فارسي سرلیک (نه ناکامي)."""
+    titles = gemini.extract_urgent_titles(
+        ["تلاش می‌کنیم از طریق یک توافق امنیتی با اسرائیل به صلحی همه‌جانبه دست یابیم."]
+    )
+    assert set(titles) == {"fa"}
+    assert not titles["fa"].endswith(".")
+
+
+def test_first_text_message_id_used_for_reply():
+    """خروجي فایلونه د پکیج لومړي متني پیغام ته ریپلای کیږي."""
+    from modules.package import first_text_message_id
+    cfg = load_config("config/settings.json")
+    state = BotState(config=cfg)
+    state.buffer = [
+        BufferItem(type="image", message_id=10, path="x.jpg"),
+        BufferItem(type="text", message_id=11, content="پښتو راپور"),
+        BufferItem(type="text", message_id=12, content="گزارش فارسی"),
+    ]
+    assert first_text_message_id(state) == 11
+    assert first_text_message_id(BotState(config=cfg)) is None
 
 
 def test_missing_langs_reported():
@@ -421,7 +498,8 @@ def test_quote_layout_and_config():
     assert QUOTE_PERSON_BOX == (677, 0, 686, 1175)
     assert QUOTE_TITLE_BOX == (62, 223, 554, 687)
     assert QUOTE_NAME_BOX == (62, 962, 554, 57)
-    assert QUOTE_RANK_BOX == (62, 1002, 554, 110)
+    # رتبه پورته-تنظیم ده او نوم ته نږدې شوه (۲۸px → ~۱۴px تشه).
+    assert QUOTE_RANK_BOX == (62, 1011, 554, 101)
     cfg = load_config("config/settings.json")
     assert cfg.design.quote_canvas_size == 1353
     assert cfg.design.quote_name_color_hex == "D8DFE7"

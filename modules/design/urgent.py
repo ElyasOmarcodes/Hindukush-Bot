@@ -43,15 +43,11 @@ def _draw_line(draw, words, widths, font, box, y, is_english, justify, gi, start
     direction = _direction(is_english)
     space_w = text_width(font, " ", is_english) or font.getlength(" ")
     n = len(words)
-    if justify and n > 1:
-        # پاتې تشه (د کشیده وروسته) د کلمو ترمنځ ووېشه — کرښه دقیقاً بشپړ عرض ډکوي.
-        gap = (bw - sum(widths)) / (n - 1)
-        offset = 0.0
-    elif justify:  # یوه‌کلمه‌یي — کشیده یې ډکه کړې، یوازې څنډې ته ونښلوه
-        gap = space_w
+    # ⚠️ د کلمو ترمنځ فاصله **هیڅکله** نه غزوو (زموږ قانون) — ډکول یوازې د کشیده کار دی.
+    gap = space_w
+    if justify:  # کشیده کرښه ډکه کړې — یوازې څنډې ته یې ونښلوه
         offset = 0.0
     else:  # وروستۍ کرښه → مرکز
-        gap = space_w
         offset = (bw - (sum(widths) + space_w * (n - 1))) / 2
 
     if is_english:

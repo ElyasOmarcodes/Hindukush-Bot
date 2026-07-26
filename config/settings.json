@@ -81,7 +81,7 @@
     "quote_title_color_hex": "FFFFFF",
     "quote_highlight_color_hex": "FEA20E",
     "quote_highlight_fraction": 0.40,
-    "quote_title_fill_threshold": 0.6,
+    "quote_title_fill_threshold": 0.75,
 
     "quote_name_font": "FModam-FBold[@mimvid].ttf",
     "quote_name_size": 35,

@@ -25,11 +25,15 @@ _HIDDEN_CHARS = (
 _MARKDOWN_SPECIALS = r"_*[]()~`>#+-=|{}.!"
 
 
-def sanitize_filename(name: str, max_len: int = 150) -> str:
-    """د فایل نوم خوندي کړه: پټ حروف لرې، normalize، ناروا حروف لرې.
+def sanitize_filename(name: str, max_len: int = 150, max_bytes: int = 200) -> str:
+    """د فایل نوم خوندي کړه: پټ حروف لرې، normalize، ناروا حروف لرې، اوږدوالی کم.
 
     Return a filesystem-safe file name: strip hidden characters, NFC-normalize
     and drop characters that are illegal on common filesystems.
+
+    ⚠️ فایل-سیسټمونه (ext4 …) د نوم حد **په بایټ** کې ټاکي، نه په توري. پښتو/فارسي
+    توری ۲ بایټه دی، نو ۱۵۰ توري = ۳۰۰ بایټه → «File name too long». ځکه دلته
+    اوږدوالی **په بایټ** هم کموو (`.jpg` او د لارې لپاره ځای پاتې کیږي).
     """
     if not name:
         return "untitled"
@@ -39,7 +43,11 @@ def sanitize_filename(name: str, max_len: int = 150) -> str:
     # ناروا فایل-سیسټم حروف او کنټرول حروف لرې کړه.
     name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "", name).strip()
     name = re.sub(r"\s+", "_", name).strip("_.")
-    name = name[:max_len].rstrip("_")
+    name = name[:max_len]
+    # په بایټ کې پرې کړه — د UTF-8 توری په منځ کې مه ماتوه.
+    if len(name.encode("utf-8")) > max_bytes:
+        name = name.encode("utf-8")[:max_bytes].decode("utf-8", "ignore")
+    name = name.rstrip("_.")
     return name or "untitled"
 
 

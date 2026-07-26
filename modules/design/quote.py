@@ -106,15 +106,18 @@ def _draw_title(canvas, text: str, font_path: str, dcfg, is_english: bool) -> No
             line = justify_line(line, lambda t: text_width(font, t, is_english), bw, seed=i)
         words = line.split()
         widths = [text_width(font, w, is_english) for w in words]
-        # د کشیده وروسته پاتې تشه د کلمو ترمنځ ووېشه — هیڅ خالي فضا نه پاتې کیږي.
-        gap = (bw - sum(widths)) / (len(words) - 1) if justify and len(words) > 1 else space_w
-        gi = _draw_aligned_line(draw, words, widths, font, box, y, is_english, gi, start_idx, normal, highlight, gap)
+        # ⚠️ فاصله تل طبیعي ده — ډکول یوازې د کشیده کار دی (زموږ قانون).
+        gi = _draw_aligned_line(draw, words, widths, font, box, y, is_english, gi, start_idx, normal, highlight, space_w)
         y += lh
 
 
 def _draw_rc(canvas, text: str, font_path: str, box, target: int, color_hex: str,
-             dcfg, is_english: bool, gap: int = 8) -> None:
-    """نوم/رتبه — بې justify، RTL ښي-مرکز / LTR کیڼ-مرکز، عمودي مرکز، شرینک-ټو-فټ."""
+             dcfg, is_english: bool, gap: int = 8, valign: str = "center") -> None:
+    """نوم/رتبه — بې justify، RTL ښي-تنظیم / LTR کیڼ-تنظیم، شرینک-ټو-فټ.
+
+    ``valign`` = "center" (نوم) یا "top" (رتبه — چې دوه-لاینه رتبه ښکته وغزیږي
+    او نوم ته ور نږدې نشي).
+    """
     if not text.strip():
         return
     bx, by, bw, bh = box
@@ -139,7 +142,7 @@ def _draw_rc(canvas, text: str, font_path: str, box, target: int, color_hex: str
     color = parse_color(color_hex)
     draw = ImageDraw.Draw(canvas)
     direction = _direction(is_english)
-    y = by + (bh - total_h) // 2  # عمودي مرکز
+    y = by if valign == "top" else by + (bh - total_h) // 2
     for line in lines:
         if is_english:
             x = bx
@@ -175,7 +178,7 @@ def render_quote_one(lang: str, quote: str, name: str, rank: str, person_path,
     _draw_rc(canvas, name, str(Path(fonts) / dcfg.quote_name_font), QUOTE_NAME_BOX,
              dcfg.quote_name_size, dcfg.quote_name_color_hex, dcfg, is_english)
     _draw_rc(canvas, rank, str(Path(fonts) / dcfg.quote_rank_font), QUOTE_RANK_BOX,
-             dcfg.quote_rank_size, dcfg.quote_rank_color_hex, dcfg, is_english)
+             dcfg.quote_rank_size, dcfg.quote_rank_color_hex, dcfg, is_english, valign="top")
 
     # د فایل نوم = د نقل قول عنوان (لکه خبر/عاجل کې).
     seed = quote or name or f"quote_{lang}"

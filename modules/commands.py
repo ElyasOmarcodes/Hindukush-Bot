@@ -28,7 +28,13 @@ from .design import quote as design_quote
 from .design import render as design_render
 from .design import urgent as design_urgent
 from .design.layout import LANGS
-from .package import BotState, collect_texts, save_package, validate_package
+from .package import (
+    BotState,
+    collect_texts,
+    first_text_message_id,
+    save_package,
+    validate_package,
+)
 from .progress import QUOTE_PROGRESS_STEPS, URGENT_PROGRESS_STEPS, Progress
 
 logger = logging.getLogger("commands")
@@ -362,10 +368,26 @@ async def _render_designs(context, data: dict, news_image, pkg_dir: Path, state:
     return paths
 
 
-async def _send_designs(context, chat_id: int, paths: list[Path]) -> None:
-    """درې انځورونه د **سند** په بڼه ولیږه چې ټلګرام یې فشار نه کړي."""
-    media = [InputMediaDocument(media=open(p, "rb"), filename=p.name) for p in paths]
-    await context.bot.send_media_group(chat_id=chat_id, media=media)
+async def _send_designs(context, chat_id: int, paths: list[Path],
+                        reply_to: int | None = None) -> None:
+    """انځورونه د **سند** په بڼه ولیږه — د پکیج لومړي متني پیغام ته ریپلای.
+
+    Sent as a reply to the package's first text message (usually the Pashto
+    report). If that message is gone, Telegram rejects the reply — so we retry
+    once without it rather than losing the whole delivery.
+    """
+    def _media():
+        return [InputMediaDocument(media=open(p, "rb"), filename=p.name) for p in paths]
+
+    if reply_to:
+        try:
+            await context.bot.send_media_group(
+                chat_id=chat_id, media=_media(), reply_to_message_id=reply_to,
+            )
+            return
+        except Exception as err:  # noqa: BLE001 - ریپلای ناکام؛ بې ریپلای یې ولیږه
+            logger.warning("ریپلای (msg %s) ناکام: %s — بې ریپلای لیږل کیږي", reply_to, err)
+    await context.bot.send_media_group(chat_id=chat_id, media=_media())
 
 
 async def _render_urgent(context, titles: dict, pkg_dir: Path, state: BotState, prog: Progress) -> list[Path]:
@@ -399,6 +421,7 @@ async def run_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None
     await prog.start()
     try:
         await prog.step(0)  # پکیج ترلاسه شو
+        reply_to = first_text_message_id(state)
         pkg_dir = save_package(state)
         texts = collect_texts(state)
         logger.info("پکیج خوندي شو → %s", pkg_dir)
@@ -418,7 +441,7 @@ async def run_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None
             raise RuntimeError("هیڅ انځور جوړ نشو")
 
         await prog.step(7)  # لیږل
-        await _send_designs(context, chat_id, paths)
+        await _send_designs(context, chat_id, paths, reply_to)
         logger.info("%d انځورونه ګروپ ته ولیږل شول", len(paths))
         await prog.finish(ok=True)
         done = [lg["code"] for lg in LANGS if (data.get(lg["title_key"]) or "").strip()]
@@ -449,6 +472,7 @@ async def run_urgent_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) 
     await prog.start()
     try:
         await prog.step(0)
+        reply_to = first_text_message_id(state)
         pkg_dir = save_package(state)
         texts = collect_texts(state)
 
@@ -462,7 +486,7 @@ async def run_urgent_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) 
             raise RuntimeError("هیڅ عاجل انځور جوړ نشو")
 
         await prog.step(5)  # لیږل
-        await _send_designs(context, chat_id, paths)
+        await _send_designs(context, chat_id, paths, reply_to)
         logger.info("%d عاجل انځورونه ولیږل شول", len(paths))
         await prog.finish(ok=True)
         await _notify_missing(context, chat_id, titles.keys())
@@ -508,6 +532,7 @@ async def run_quote_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -
     await prog.start()
     try:
         await prog.step(0)
+        reply_to = first_text_message_id(state)
         pkg_dir = save_package(state)
         texts = collect_texts(state)
 
@@ -523,7 +548,7 @@ async def run_quote_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -
             raise RuntimeError("هیڅ نقل قول انځور جوړ نشو")
 
         await prog.step(5)  # لیږل
-        await _send_designs(context, chat_id, paths)
+        await _send_designs(context, chat_id, paths, reply_to)
         logger.info("%d نقل قول انځورونه ولیږل شول", len(paths))
         await prog.finish(ok=True)
         await _notify_missing(context, chat_id, quotes.keys())

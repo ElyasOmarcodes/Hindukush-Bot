@@ -79,7 +79,7 @@ class DesignConfig:
     quote_highlight_color_hex: str = "FEA20E"   # لکه د خبر عنوان هایلایټ
     quote_highlight_fraction: float = 0.40      # اخیري ۳۵–۴۵٪
     # که نقل قول د باکس تر دې برخې زیات ډک کړي → پورته پیل؛ نه‌نو د پورته/مرکز منځ.
-    quote_title_fill_threshold: float = 0.6
+    quote_title_fill_threshold: float = 0.75
     quote_name_font: str = "FModam-FBold[@mimvid].ttf"
     quote_name_size: int = 35
     quote_name_color_hex: str = "D8DFE7"

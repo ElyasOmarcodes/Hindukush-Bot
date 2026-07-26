@@ -127,3 +127,15 @@ def save_package(state: BotState) -> Path:
 def collect_texts(state: BotState) -> list[str]:
     """د بفر ټول متني راپورونه په ترتیب سره راوباسه.  Ordered text bodies."""
     return [i.content for i in state.buffer if i.type == "text"]
+
+
+def first_text_message_id(state: BotState) -> int | None:
+    """د پکیج د **لومړي متني پیغام** ID — چې خروجي انځورونه ورته ریپلای شي.
+
+    The rendered images are sent as a reply to the package's first text message
+    (usually the Pashto report), so they stay threaded to their source.
+    """
+    for item in state.buffer:
+        if item.type == "text" and item.message_id:
+            return item.message_id
+    return None
