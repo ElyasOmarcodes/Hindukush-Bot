@@ -344,7 +344,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if errors:
             await q.edit_message_text("⚠️ د اعتبار ستونزه:\n- " + "\n- ".join(errors))
             return
-        await q.edit_message_text("⏳ پروسس پیل شو…")
+        # د تایید بټنې لرې کړه (دوه ځله کلیک ونه شي) — نوی پیغام نه لیږو.
+        try:
+            await q.edit_message_reply_markup(reply_markup=None)
+        except Exception:  # noqa: BLE001
+            pass
         await run_pipeline(context, q.message.chat_id)
 
 
@@ -418,7 +422,7 @@ async def run_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None
 
     state.processing = True
     prog = Progress(context.bot, chat_id, min_interval=state.config.design.progress_min_interval)
-    await prog.start()
+    await prog.start(reply_markup=main_keyboard())
     try:
         await prog.step(0)  # پکیج ترلاسه شو
         reply_to = first_text_message_id(state)
@@ -454,10 +458,6 @@ async def run_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None
         state.reset()
         state.listening = False
         state.mode = "news"
-        await context.bot.send_message(
-            chat_id, "✅ بشپړ شو — د نوي پکیج لپاره «🛠 جوړول» ووهئ.",
-            reply_markup=main_keyboard(),
-        )
 
 
 async def run_urgent_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
@@ -469,7 +469,7 @@ async def run_urgent_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) 
         min_interval=state.config.design.progress_min_interval,
         steps=URGENT_PROGRESS_STEPS,
     )
-    await prog.start()
+    await prog.start(reply_markup=main_keyboard())
     try:
         await prog.step(0)
         reply_to = first_text_message_id(state)
@@ -497,10 +497,6 @@ async def run_urgent_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) 
         state.reset()
         state.listening = False
         state.mode = "news"
-        await context.bot.send_message(
-            chat_id, "✅ بشپړ شو — د نوي پکیج لپاره «🛠 جوړول» ووهئ.",
-            reply_markup=main_keyboard(),
-        )
 
 
 async def _render_quotes(context, quotes: dict, person, pkg_dir: Path, state: BotState, prog: Progress) -> list[Path]:
@@ -529,7 +525,7 @@ async def run_quote_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -
         min_interval=state.config.design.progress_min_interval,
         steps=QUOTE_PROGRESS_STEPS,
     )
-    await prog.start()
+    await prog.start(reply_markup=main_keyboard())
     try:
         await prog.step(0)
         reply_to = first_text_message_id(state)
@@ -559,7 +555,3 @@ async def run_quote_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -
         state.reset()
         state.listening = False
         state.mode = "news"
-        await context.bot.send_message(
-            chat_id, "✅ بشپړ شو — د نوي پکیج لپاره «🛠 جوړول» ووهئ.",
-            reply_markup=main_keyboard(),
-        )

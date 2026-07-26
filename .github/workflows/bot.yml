@@ -37,6 +37,12 @@ jobs:
   run-bot:
     name: Run bot
     needs: test
+    # ⚠️ رباټ اوس په Railway کې چلیږي. که دا jobپه هر push پیل شي، دوهم poller
+    # جوړیږي او ټلګرام 409 "getUpdates conflict" ورکوي — یعنې د Railway رباټ
+    # ماتیږي. نو دا job **یوازې په لاسي (Run workflow) چلیږي**، نه په push.
+    # Manual-only: the live bot runs on Railway; an automatic run here would be
+    # a second poller on the same token and would break it.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     # GitHub Actions caps a single job at 6 hours (360 min). We run the bot
     # for as long as the platform allows so it stays alive during the session.

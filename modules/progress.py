@@ -59,9 +59,15 @@ class Progress:
         self._last_edit = 0.0
         self.steps = steps or PROGRESS_STEPS
 
-    async def start(self) -> None:
+    async def start(self, reply_markup=None) -> None:
+        """د پرمختګ پیغام ولیږه.
+
+        ``reply_markup`` د بوټ-کیبورډ بیا-ټاکلو لپاره دی: د دورې پای کې بېل
+        پیغام نه لیږو، نو منو همدلته بیرته اصلي حالت ته ځي (ټلګرام کیبورډ یوازې
+        د یوه پیغام سره بدلولی شي).
+        """
         try:
-            m = await self.bot.send_message(self.chat_id, "⏳ پیل کیږي…")
+            m = await self.bot.send_message(self.chat_id, "⏳ پیل کیږي…", reply_markup=reply_markup)
             self.msg_id = m.message_id
             self._last_edit = time.monotonic()
         except Exception as err:  # noqa: BLE001
