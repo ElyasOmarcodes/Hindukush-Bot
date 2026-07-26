@@ -345,7 +345,7 @@ def test_quote_layout_and_config():
     assert QUOTE_TEMPLATES == {"ps": "Quotation_Pashto.png", "fa": "Quotation_Persian.png", "en": "Quotation_English.png"}
     assert QUOTE_PERSON_BOX == (677, 0, 686, 1175)
     assert QUOTE_TITLE_BOX == (62, 223, 554, 687)
-    assert QUOTE_NAME_BOX == (62, 947, 554, 57)
+    assert QUOTE_NAME_BOX == (62, 962, 554, 57)
     assert QUOTE_RANK_BOX == (62, 1002, 554, 110)
     cfg = load_config("config/settings.json")
     assert cfg.design.quote_canvas_size == 1353

@@ -86,7 +86,13 @@ def _draw_title(canvas, text: str, font_path: str, dcfg, is_english: bool) -> No
     total_words = sum(len(ln.split()) for ln in lines)
     start_idx = int(total_words * (1 - dcfg.quote_highlight_fraction))
 
-    y = by  # پورته-تنظیم
+    # عمودي پیل: اوږد نقل قول → پورته؛ کوچنی → د پورته او مرکز تر منځ (خالي فضا لږه شي).
+    total_h = len(lines) * lh
+    if total_h >= dcfg.quote_title_fill_threshold * bh:
+        y = by
+    else:
+        center_y = by + (bh - total_h) // 2
+        y = (by + center_y) // 2  # د پورته او مرکز منځ
     gi = 0
     for i, line in enumerate(lines):
         is_last = i == len(lines) - 1
@@ -164,7 +170,8 @@ def render_quote_one(lang: str, quote: str, name: str, rank: str, person_path,
     _draw_rc(canvas, rank, str(Path(fonts) / dcfg.quote_rank_font), QUOTE_RANK_BOX,
              dcfg.quote_rank_size, dcfg.quote_rank_color_hex, dcfg, is_english)
 
-    seed = name or quote or f"quote_{lang}"
+    # د فایل نوم = د نقل قول عنوان (لکه خبر/عاجل کې).
+    seed = quote or name or f"quote_{lang}"
     path = export_image(canvas, out_dir, seed, dcfg)
     logger.info("[%s] د نقل قول انځور جوړ شو → %s", lang, path.name)
     return path

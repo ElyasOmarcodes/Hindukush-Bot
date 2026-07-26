@@ -93,5 +93,6 @@ QUOTE_TEMPLATES = {
 QUOTE_PERSON_BOX = (677, 0, 686, 1175)
 # باکس = (left, top, width, height) — ټول د ټمپلیټ پر مخ.
 QUOTE_TITLE_BOX = (62, 223, 554, 687)
-QUOTE_NAME_BOX = (62, 947, 554, 57)
+# د نوم باکس ۱۵px ښکته شو (947→962) چې رتبې ته نږدې شي — لکه یو متن، دوه لاینه.
+QUOTE_NAME_BOX = (62, 962, 554, 57)
 QUOTE_RANK_BOX = (62, 1002, 554, 110)
