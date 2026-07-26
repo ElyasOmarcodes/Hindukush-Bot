@@ -18,6 +18,32 @@ logger = logging.getLogger("design.text")
 
 _font_cache: dict = {}
 
+# ⚠️ زموږ ټول شکل‌ورکول (RTL) پر Pillow-libraqm ولاړ دي. که راقم نه وي، Pillow
+# د `direction=` لپاره یوه ګونګه `KeyError` غورځوي او هر ډیزاین ماتیږي.
+_RAQM_HINT = (
+    "د Pillow سره libraqm نشته — د پښتو/فارسي شکل‌ورکول (RTL) کار نه کوي.\n"
+    "  حل: د مخزن Dockerfile وکاروه (Railway → Settings → Build → Dockerfile)، "
+    "یا Pillow د wheel څخه بیا نصب کړه:  pip install --force-reinstall "
+    "--only-binary=Pillow Pillow\n"
+    "  Pillow was built without libraqm; RTL text shaping cannot work."
+)
+
+
+def has_raqm() -> bool:
+    """آیا Pillow له libraqm سره جوړ شوی؟  Whether Pillow has libraqm."""
+    try:
+        from PIL import features
+
+        return bool(features.check("raqm"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def ensure_raqm() -> None:
+    """که راقم نشته، په پیل کې یې څرګنده کړه (نه د هر ډیزاین پر مهال ګونګه خطا)."""
+    if not has_raqm():
+        logger.critical("%s", _RAQM_HINT)
+
 
 def _direction(is_english: bool) -> str:
     return "ltr" if is_english else "rtl"
@@ -45,7 +71,10 @@ def text_width(font: ImageFont.FreeTypeFont, text: str, is_english: bool) -> flo
     """د shaped متن عرض (raqm)."""
     if not text:
         return 0.0
-    return font.getlength(text, direction=_direction(is_english))
+    try:
+        return font.getlength(text, direction=_direction(is_english))
+    except KeyError as err:  # راقم نشته → ګونګه KeyError؛ څرګنده پیغام ورکړه
+        raise RuntimeError(_RAQM_HINT) from err
 
 
 def line_height(font: ImageFont.FreeTypeFont, gap: int) -> int:

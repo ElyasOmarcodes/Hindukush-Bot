@@ -22,6 +22,7 @@ from telegram.ext import (
 
 from modules import commands, monitor
 from modules.config import Config, load_config
+from modules.design.text_render import ensure_raqm
 from modules.package import BotState
 from modules.utils import ensure_dirs, setup_logging
 
@@ -122,6 +123,8 @@ def main() -> None:
         )
 
     ensure_dirs(config.packages_dir, config.pending_dir, "logs")
+    # د پیل کې چک — که Pillow بې راقم وي، دلیل یې همدلته څرګند شي.
+    ensure_raqm()
 
     app = build_application(config)
     logger.info("NewsBot پیلیږي…")

@@ -1,0 +1,12 @@
+.git
+.github
+__pycache__
+**/__pycache__
+*.pyc
+.pytest_cache
+.env
+env
+logs
+data/packages
+data/pending
+run.bat

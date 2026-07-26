@@ -1,5 +1,9 @@
-# Pillow >= 10.4 manylinux wheels bundle raqm/harfbuzz/fribidi, which we use
-# for native RTL (Arabic-script) shaping — no arabic-reshaper needed.
+# ⚠️ Pillow باید **له wheel** نصب شي، نه له سرچینې. رسمي manylinux wheelونه
+# راقم (libraqm) دننه لري، چې زموږ د RTL (پښتو/فارسي) شکل‌ورکول پرې ولاړ دي.
+# د سرچینې جوړښت راقم غورځوي → «not supported without libraqm» او هر ډیزاین
+# ماتیږي. د Dockerfile دا په `--only-binary=Pillow` سره تضمینوي.
+# Install Pillow from a wheel only — official manylinux wheels vendor libraqm,
+# which native RTL shaping requires. A source build silently drops it.
 python-telegram-bot[all]>=21.0
 google-genai>=0.3.0
 Pillow>=10.4.0

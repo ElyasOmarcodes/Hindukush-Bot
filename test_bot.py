@@ -382,6 +382,28 @@ def test_quote_sizes_from_settings_json():
         assert key in raw["design"], f"{key} باید په settings.json کې جلا درج وي"
 
 
+def test_pillow_has_raqm():
+    """د RTL شکل‌ورکول پر libraqm ولاړ دي — بې هغې هر ډیزاین ماتیږي.
+
+    که Pillow له سرچینې جوړ شي (نه له wheel)، راقم ورک شي او په چلولو کې دا
+    خطا راځي: «not supported without libraqm». دا ټیسټ یې مخکې له deploy نیسي.
+    """
+    from modules.design.text_render import has_raqm
+    assert has_raqm(), (
+        "Pillow بې libraqm جوړ شوی — د Dockerfile له لارې یې نصب کړه "
+        "(pip install --only-binary=Pillow)."
+    )
+
+
+def test_rtl_text_width_works():
+    """د پښتو متن عرض واقعاً محاسبه کیږي (د راقم عملي ازموینه)."""
+    from pathlib import Path as _P
+    from modules.design.text_render import get_font, text_width
+    d = load_config("config/settings.json").design
+    font = get_font(str(_P(d.fonts_dir) / d.title_font), 60)
+    assert text_width(font, "د کابل خبر", False) > 0
+
+
 def test_long_rtl_filename_is_byte_capped():
     """ext4 حد **په بایټ** دی — پښتو توری ۲ بایټه، نو ۱۵۰ توري = ۳۰۰ بایټه.
 
