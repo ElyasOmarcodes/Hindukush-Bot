@@ -62,7 +62,7 @@
     "jpeg_quality_min": 92,
     "target_kb": 1600,
 
-    "progress_min_interval": 1.0,
+    "progress_min_interval": 0.7,
 
     "urgent_canvas_size": 1561,
     "urgent_title_font": "FModam-FBold[@mimvid].ttf",

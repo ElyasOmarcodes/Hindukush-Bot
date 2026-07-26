@@ -35,7 +35,12 @@ from .package import (
     save_package,
     validate_package,
 )
-from .progress import QUOTE_PROGRESS_STEPS, URGENT_PROGRESS_STEPS, Progress
+from .progress import (
+    QUOTE_PROGRESS_STEPS,
+    URGENT_PROGRESS_STEPS,
+    Progress,
+    fa_digits,
+)
 
 logger = logging.getLogger("commands")
 
@@ -96,21 +101,20 @@ def missing_langs(done) -> list[str]:
     return [LANG_NAMES[code] for code in ALL_LANGS if code not in have]
 
 
-async def _notify_missing(context: ContextTypes.DEFAULT_TYPE, chat_id: int, done) -> None:
-    """پکیج تل ۳ متني راپورونو ته اړتیا لري — د نشتو ژبو خبرتیا ورکړه.
+def _summary(count: int, done) -> str:
+    """د دورې لنډیز — څو انځورونه، کومې ژبې، او کومه ژبه نه وه راغلې.
 
-    Languages with no report are simply not designed; tell the user which ones
-    were missing so nothing fails silently.
+    Goes inside the live progress message (no separate message), so the user
+    still learns which language was missing without any extra chatter.
     """
+    have = [LANG_NAMES[c] for c in ALL_LANGS if c in set(done)]
+    line = f"📤 *{fa_digits(count)}* انځورونه ولیږل شول — {'، '.join(have)}"
     names = missing_langs(done)
-    if not names:
-        return
-    logger.info("د دې ژبو راپور نه و راغلی: %s", "، ".join(names))
-    await context.bot.send_message(
-        chat_id,
-        "ℹ️ د «" + "» او «".join(names) + "» ژبې راپور مو نه دی راستولی — "
-        "نو د هغې ژبې ډیزاین جوړ نشو.",
-    )
+    if names:
+        logger.info("د دې ژبو راپور نه و راغلی: %s", "، ".join(names))
+        line += ("\n⚠️ د «" + "» او «".join(names) + "» راپور مو نه و راستولی — "
+                 "ډیزاین یې جوړ نشو.")
+    return line
 
 
 def _state(context: ContextTypes.DEFAULT_TYPE) -> BotState:
@@ -421,7 +425,11 @@ async def run_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None
         return
 
     state.processing = True
-    prog = Progress(context.bot, chat_id, min_interval=state.config.design.progress_min_interval)
+    prog = Progress(
+        context.bot, chat_id,
+        min_interval=state.config.design.progress_min_interval,
+        title="📰 خبر",
+    )
     await prog.start(reply_markup=main_keyboard())
     try:
         await prog.step(0)  # پکیج ترلاسه شو
@@ -447,9 +455,8 @@ async def run_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None
         await prog.step(7)  # لیږل
         await _send_designs(context, chat_id, paths, reply_to)
         logger.info("%d انځورونه ګروپ ته ولیږل شول", len(paths))
-        await prog.finish(ok=True)
         done = [lg["code"] for lg in LANGS if (data.get(lg["title_key"]) or "").strip()]
-        await _notify_missing(context, chat_id, done)
+        await prog.finish(ok=True, summary=_summary(len(paths), done))
     except Exception as err:  # noqa: BLE001
         logger.error("د pipeline خطا: %s", err, exc_info=True)
         await prog.finish(ok=False, err=str(err))
@@ -468,6 +475,7 @@ async def run_urgent_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) 
         context.bot, chat_id,
         min_interval=state.config.design.progress_min_interval,
         steps=URGENT_PROGRESS_STEPS,
+        title="🔴 عاجل خبر",
     )
     await prog.start(reply_markup=main_keyboard())
     try:
@@ -488,8 +496,7 @@ async def run_urgent_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) 
         await prog.step(5)  # لیږل
         await _send_designs(context, chat_id, paths, reply_to)
         logger.info("%d عاجل انځورونه ولیږل شول", len(paths))
-        await prog.finish(ok=True)
-        await _notify_missing(context, chat_id, titles.keys())
+        await prog.finish(ok=True, summary=_summary(len(paths), titles.keys()))
     except Exception as err:  # noqa: BLE001
         logger.error("د عاجل pipeline خطا: %s", err, exc_info=True)
         await prog.finish(ok=False, err=str(err))
@@ -524,6 +531,7 @@ async def run_quote_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -
         context.bot, chat_id,
         min_interval=state.config.design.progress_min_interval,
         steps=QUOTE_PROGRESS_STEPS,
+        title="💬 نقل قول",
     )
     await prog.start(reply_markup=main_keyboard())
     try:
@@ -546,8 +554,7 @@ async def run_quote_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -
         await prog.step(5)  # لیږل
         await _send_designs(context, chat_id, paths, reply_to)
         logger.info("%d نقل قول انځورونه ولیږل شول", len(paths))
-        await prog.finish(ok=True)
-        await _notify_missing(context, chat_id, quotes.keys())
+        await prog.finish(ok=True, summary=_summary(len(paths), quotes.keys()))
     except Exception as err:  # noqa: BLE001
         logger.error("د نقل قول pipeline خطا: %s", err, exc_info=True)
         await prog.finish(ok=False, err=str(err))

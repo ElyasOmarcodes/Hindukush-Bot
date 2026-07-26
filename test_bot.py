@@ -467,6 +467,151 @@ def test_first_text_message_id_used_for_reply():
     assert first_text_message_id(BotState(config=cfg)) is None
 
 
+def test_progress_keeps_checklist_and_shows_summary():
+    """ژوندی حالت: چیک‌لیسټ د پای کې **نه پاکیږي**، لنډیز ورسره ښکاري."""
+    import asyncio
+    from modules.progress import Progress, URGENT_PROGRESS_STEPS
+
+    class _M:
+        def __init__(self, i):
+            self.message_id = i
+
+    class _Bot:
+        def __init__(self):
+            self.last = None
+            self.sends = 0
+
+        async def send_message(self, cid, text=None, **k):
+            self.sends += 1
+            self.last = text
+            return _M(1)
+
+        async def edit_message_text(self, text=None, **k):
+            self.last = text
+            return _M(1)
+
+    bot = _Bot()
+
+    async def go():
+        p = Progress(bot, 1, min_interval=0.0, steps=URGENT_PROGRESS_STEPS, title="🔴 عاجل خبر")
+        await p.start()
+        for i in range(len(URGENT_PROGRESS_STEPS)):
+            await p.step(i)
+        await p.finish(ok=True, summary="📤 *۳* انځورونه ولیږل شول")
+
+    asyncio.run(go())
+    assert bot.sends == 1                       # یوازې یو پیغام — هیڅ اضافي
+    assert "🔴 عاجل خبر" in bot.last            # سرلیک
+    assert "✅ بشپړ شو" in bot.last
+    assert "۱۰۰٪" in bot.last                   # پټه + سلنه (پښتو شمېرې)
+    assert bot.last.count("✅") >= len(URGENT_PROGRESS_STEPS)  # چیک‌لیسټ پاتې دی
+    assert "پښتو ډیزاین" in bot.last and "ګروپ ته لیږل" in bot.last
+    assert "۳* انځورونه" in bot.last            # لنډیز
+
+
+def test_progress_failure_marks_the_failed_step():
+    """ناکامي: هغه ګام چې مات شو ❌ نښه کیږي، نور یې ښکاري."""
+    import asyncio
+    from modules.progress import Progress, URGENT_PROGRESS_STEPS
+
+    class _M:
+        def __init__(self, i):
+            self.message_id = i
+
+    class _Bot:
+        last = None
+
+        async def send_message(self, cid, text=None, **k):
+            self.last = text
+            return _M(1)
+
+        async def edit_message_text(self, text=None, **k):
+            self.last = text
+            return _M(1)
+
+    bot = _Bot()
+
+    async def go():
+        p = Progress(bot, 1, min_interval=0.0, steps=URGENT_PROGRESS_STEPS)
+        await p.start()
+        await p.step(3)
+        await p.finish(ok=False, err="هیڅ عاجل انځور جوړ نشو")
+
+    asyncio.run(go())
+    assert "❌ ناکام" in bot.last
+    assert "❌ 🎨 فارسي ډیزاین" in bot.last     # دقیقاً کوم ګام مات شو
+    assert "هیڅ عاجل انځور جوړ نشو" in bot.last
+
+
+def test_progress_does_not_sleep_but_skips_early_edits():
+    """تازه کول کار نه ځنډوي — ډیر ژر تازه کول پریښودل کیږي، نه ویده کیدل."""
+    import asyncio
+    import time as _t
+    from modules.progress import Progress
+
+    class _M:
+        def __init__(self, i):
+            self.message_id = i
+
+    class _Bot:
+        def __init__(self):
+            self.edits = 0
+
+        async def send_message(self, cid, text=None, **k):
+            return _M(1)
+
+        async def edit_message_text(self, text=None, **k):
+            self.edits += 1
+            return _M(1)
+
+    bot = _Bot()
+
+    async def go():
+        p = Progress(bot, 1, min_interval=5.0)  # لوړ حد → منځني تازه کول پریږدي
+        await p.start()
+        for i in range(6):
+            await p.step(i)
+        await p.finish(ok=True)
+
+    t0 = _t.monotonic()
+    asyncio.run(go())
+    assert _t.monotonic() - t0 < 1.0   # هیڅ ویده کیدل نشته
+    assert bot.edits >= 1              # وروستی حالت تل په زور ښکاري
+
+
+def test_summary_lists_sent_and_missing_languages():
+    from modules.commands import _summary
+    s = _summary(2, ["ps", "fa"])
+    assert "پښتو" in s and "فارسي" in s
+    assert "انګلیسي" in s and "نه و راستولی" in s
+    full = _summary(3, ["ps", "fa", "en"])
+    assert "نه و راستولی" not in full
+
+
+def test_rejected_reaction_emoji_is_not_retried():
+    """ټلګرام 1️⃣ نه مني — یو ځل رد شي، بیا یې نه ازمویو (بې‌ګټې کال نشته)."""
+    import asyncio
+    from modules import monitor
+
+    monitor._REJECTED_EMOJI.clear()
+    calls = []
+
+    class _Bot:
+        async def set_message_reaction(self, **kw):
+            calls.append(kw["reaction"][0].emoji)
+            raise RuntimeError("Reaction_invalid")
+
+    class _Ctx:
+        bot = _Bot()
+
+    ctx = _Ctx()
+    asyncio.run(monitor.react(ctx, 1, 1, "1️⃣"))
+    asyncio.run(monitor.react(ctx, 1, 2, "1️⃣"))
+    asyncio.run(monitor.react(ctx, 1, 3, "1️⃣"))
+    assert len(calls) == 1, "رد شوی ایموجي باید یوازې یو ځل وازمویل شي"
+    monitor._REJECTED_EMOJI.clear()
+
+
 def test_missing_langs_reported():
     """کومې ژبې راپور نه وي راغلی، هغه یې کارونکي ته نوم په نوم وایي."""
     from modules.commands import missing_langs

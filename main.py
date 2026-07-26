@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 
 from telegram import BotCommand, Update
+from telegram.error import Conflict
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -42,6 +43,15 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     Global error handler: log the error and, when possible, tell the chat that
     the bot is still alive. Never re-raise, so one failure can't kill the loop.
     """
+    # د بیا-ځای‌پرځای کولو (redeploy) پر مهال زوړ او نوی کانټینر یوه شیبه دواړه
+    # پولینګ کوي — ټلګرام Conflict ورکوي. دا تمه شوې ده او پخپله حل کیږي، نو
+    # اوږد traceback نه لیکو (زوړ کانټینر چې ودریږي، ختمیږي).
+    if isinstance(context.error, Conflict):
+        logger.warning(
+            "د ټلګرام Conflict — بل کانټینر/چلونکی هم پولینګ کوي. که د redeploy "
+            "پر مهال وي پخپله حلیږي؛ نه‌نو ډاډ ترلاسه کړه چې یوازې یو نسخه روانه ده."
+        )
+        return
     logger.error("خطا: %s", context.error, exc_info=context.error)
     try:
         if isinstance(update, Update) and update.effective_chat:

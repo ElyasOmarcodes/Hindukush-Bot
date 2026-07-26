@@ -27,12 +27,19 @@ def _state(context: ContextTypes.DEFAULT_TYPE) -> BotState:
     return context.application.bot_data["state"]
 
 
+# ټلګرام یوازې ځینې ایموجي د ری‌اکشن په توګه مني (لکه 1️⃣2️⃣3️⃣ نه مني). کوم چې
+# یو ځل رد شي، بیا یې نه ازمویو — نه بې‌ګټې API کال، نه د لاګ شور.
+_REJECTED_EMOJI: set = set()
+
+
 async def react(context, chat_id: int, message_id: int, emoji: str) -> bool:
     """یو ری‌اکشن ورکړه؛ که ونه منل شي، False راوګرځوه (loop نه ماتوي).
 
-    Set a single reaction. Telegram only allows certain emojis, so failure is
-    swallowed and reported via the return value rather than raising.
+    Set a single reaction. Telegram only allows certain emojis; a rejected one
+    is remembered so we never waste another call on it.
     """
+    if emoji in _REJECTED_EMOJI:
+        return False
     try:
         await context.bot.set_message_reaction(
             chat_id=chat_id,
@@ -41,7 +48,11 @@ async def react(context, chat_id: int, message_id: int, emoji: str) -> bool:
         )
         return True
     except Exception as err:  # noqa: BLE001
-        logger.warning("ری‌اکشن ونه منل شو (%s): %s", emoji, err)
+        if "REACTION_INVALID" in str(err).upper().replace(" ", "_"):
+            _REJECTED_EMOJI.add(emoji)
+            logger.info("ټلګرام «%s» د ری‌اکشن په توګه نه مني — بیا یې نه ازمویم", emoji)
+        else:
+            logger.warning("ری‌اکشن ونه منل شو (%s): %s", emoji, err)
         return False
 
 
