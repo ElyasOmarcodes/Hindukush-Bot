@@ -27,7 +27,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 # ⚠️ دا کرښه مه لرې کوه — پرته له دې راقم ناکاره او ټول ډیزاینونه ماتیږي.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libfribidi0 \
+    && apt-get install -y --no-install-recommends libfribidi0 tzdata \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

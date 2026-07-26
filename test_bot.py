@@ -422,6 +422,41 @@ def test_long_rtl_filename_is_byte_capped():
         Path(td, name + ".jpg").write_text("x", encoding="utf-8")
 
 
+def test_jalali_date_uses_kabul_not_server_time(monkeypatch):
+    """⚠️ regression: نېټه باید د **کابل** په وخت وي، نه د سرور (UTC).
+
+    Railway په UTC چلیږي. د کابل د نیمې شپې او ۴:۳۰ سهار ترمنځ، UTC لا هم د
+    تیرې ورځې دی — نو `JalaliDate.today()` به نېټه یوه ورځ شاته ښودله.
+    """
+    from datetime import datetime, timedelta, timezone as _tz
+    from persiantools.jdatetime import JalaliDate
+    from modules.design import urgent as du
+
+    kabul = _tz(timedelta(hours=4, minutes=30))
+    # د کابل ۳:۳۰ سهار = UTC ۲۳:۰۰ د تیرې ورځې.
+    moment = datetime(2026, 7, 26, 3, 30, tzinfo=kabul)
+
+    class _FakeDT(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return moment.astimezone(tz) if tz else moment.replace(tzinfo=None)
+
+    monkeypatch.setattr(du, "datetime", _FakeDT)
+    got = du.current_jalali_date("Asia/Kabul")
+    want = JalaliDate(moment.date())
+    assert got == f"{want.year}/{want.month:02d}/{want.day}"
+    # د UTC نېټه به یوه ورځ شاته وای — ډاډ ترلاسه کړه چې هغه نه ده.
+    utc_day = JalaliDate(moment.astimezone(_tz.utc).date())
+    assert utc_day.day != want.day, "د ټیسټ شېبه باید د ورځې د بدلون په سر کې وي"
+    assert got.endswith(f"/{want.day}")
+
+
+def test_unknown_timezone_falls_back_to_kabul_offset():
+    """که tzdata نه وي، UTC+04:30 کارول کیږي — نېټه بیا هم سمه ده."""
+    from modules.design import urgent as du
+    assert du.current_jalali_date("Not/AZone").count("/") == 2
+
+
 def test_urgent_language_detection_on_short_reports():
     """عاجل راپورونه لنډ وي — پښتو او فارسي باید سره ګډ نشي."""
     assert gemini.detect_language("دوه تنه ووژل شول") == "ps"

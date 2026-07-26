@@ -109,6 +109,8 @@ class Config:
     admin_user_ids: list[int] = field(default_factory=list)
     packages_dir: str = "data/packages"
     pending_dir: str = "data/pending"
+    # د نېټې لپاره وخت-سیمه (عاجل خبر). سرور په UTC چلیږي، خبرونه په کابل وخت.
+    timezone: str = "Asia/Kabul"
 
     gemini_api_keys: list[str] = field(default_factory=list)
     # د مډلونو ترتیب لښتی — له تر ټولو قوي څخه ضعیف. cascade **یوازې** دا ترتیب کاروي.
@@ -184,6 +186,7 @@ def load_config(settings_path: str | Path = "config/settings.json") -> Config:
         admin_user_ids=list(tg.get("admin_user_ids", []) or []),
         packages_dir=tg.get("packages_dir", "data/packages"),
         pending_dir=tg.get("pending_dir", "data/pending"),
+        timezone=data.get("timezone", "Asia/Kabul"),
         gemini_api_keys=list(gm.get("api_keys", []) or []),
         max_items=int(pk.get("max_items", 4)),
         # NOTE: `models` filled below (only if settings.json provides a list).
@@ -209,6 +212,8 @@ def load_config(settings_path: str | Path = "config/settings.json") -> Config:
         cfg.bot_token = os.environ["TELEGRAM_BOT_TOKEN"].strip()
     if os.environ.get("TELEGRAM_GROUP_ID"):
         cfg.group_id = int(os.environ["TELEGRAM_GROUP_ID"].strip())
+    if os.environ.get("TIMEZONE"):
+        cfg.timezone = os.environ["TIMEZONE"].strip()
     if os.environ.get("ADMIN_USER_IDS"):
         cfg.admin_user_ids = _split_csv_ints(os.environ["ADMIN_USER_IDS"])
     if os.environ.get("GEMINI_API_KEYS"):

@@ -117,20 +117,24 @@ def _missing_note(done) -> str | None:
             "ډیزاین یې جوړ نشو.")
 
 
+# د دورې د پای پیغام — کیبورډ یې راوړي. لنډ ساتل شوی دی.
+MENU_RESET_TEXT = "🛠 چمتو یم — د نوي پکیج لپاره «جوړول» ووهئ."
+
+
 async def _restore_menu(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
                         text: str | None = None) -> None:
     """منو بیرته اصلي حالت ته وګرځوه.
 
-    ټلګرام د بوټ-کیبورډ یوازې د یوه پیغام سره بدلولی شي. که ویلو ته څه وي
-    (لکه د نشتې ژبې خبرتیا) هماغه پیغام یې وړي؛ نه‌نو یو تش پیغام لیږو او
-    **سمدلاسه یې ړنګوو** — کیبورډ پاتې کیږي خو چټ کې هیڅ نه پاتې کیږي.
+    ⚠️ ټلګرام د بوټ-کیبورډ یوازې د یوه **پاتې کېدونکي** پیغام سره بدلولی شي.
+    پخوا مې یو تش پیغام لیږه او سمدلاسه مې ړنګاوه — خو د پیغام ړنګول کیبورډ
+    هم بېرته اخلي، نو منو ریسیټ نه کېده. اوس پیغام پاتې کیږي (لنډ دی).
+    که ویلو ته څه وي (لکه د نشتې ژبې خبرتیا)، هماغه پیغام کیبورډ وړي — نو
+    یو پیغام بس دی.
     """
     try:
-        m = await context.bot.send_message(
-            chat_id, text or "🛠", reply_markup=main_keyboard()
+        await context.bot.send_message(
+            chat_id, text or MENU_RESET_TEXT, reply_markup=main_keyboard()
         )
-        if not text:
-            await context.bot.delete_message(chat_id=chat_id, message_id=m.message_id)
     except Exception as err:  # noqa: BLE001 - منو بیا ټاکل حیاتي نه دي
         logger.debug("د منو بیا ټاکل: %s", err)
 

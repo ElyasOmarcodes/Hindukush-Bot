@@ -1,4 +1,6 @@
 {
+  "timezone": "Asia/Kabul",
+
   "telegram": {
     "bot_token": "",
     "group_id": 0,

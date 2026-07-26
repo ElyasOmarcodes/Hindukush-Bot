@@ -8,6 +8,7 @@ and today's Solar-Hijri (Jalali) date. No photo, source or location layer.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -29,11 +30,28 @@ from .text_render import (
 logger = logging.getLogger("design.urgent")
 
 
-def current_jalali_date() -> str:
-    """د نننۍ ورځې هجري شمسي نیټه — yyyy/mm/d."""
+# د افغانستان وخت (UTC+04:30) — که د سیسټم د وخت-سیمو معلومات نه وي، همدا کاروو.
+_KABUL_FALLBACK = timezone(timedelta(hours=4, minutes=30))
+
+
+def current_jalali_date(tz_name: str = "Asia/Kabul") -> str:
+    """د نننۍ ورځې هجري شمسي نیټه — yyyy/mm/d، **د کابل په وخت**.
+
+    ⚠️ `JalaliDate.today()` د **سرور** محلي نېټه کاروي. Railway (او ډیری
+    کوربه‌توبونه) په UTC چلیږي، نو د کابل د نیمې شپې او ۴:۳۰ سهار ترمنځ به یې
+    نېټه **یوه ورځ شاته** ښودله. ځکه نېټه د ټاکل شوې وخت-سیمې پر بنسټ حسابوو.
+    """
     from persiantools.jdatetime import JalaliDate
 
-    j = JalaliDate.today()
+    try:
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo(tz_name)
+    except Exception:  # noqa: BLE001 - tzdata نشته یا نوم ناسم دی
+        logger.warning("د «%s» وخت-سیمه ونه موندل شوه — UTC+04:30 کارول کیږي", tz_name)
+        tz = _KABUL_FALLBACK
+
+    j = JalaliDate(datetime.now(tz).date())
     return f"{j.year}/{j.month:02d}/{j.day}"
 
 
@@ -131,7 +149,7 @@ def render_urgent_one(lang: str, title: str, config: Config, out_dir) -> Path:
 
     if title.strip():
         _draw_title(canvas, title, title_font, dcfg, is_english)
-    _draw_date(canvas, current_jalali_date(), date_font, dcfg)
+    _draw_date(canvas, current_jalali_date(config.timezone), date_font, dcfg)
 
     name = sanitize_filename(title) if title.strip() else f"urgent_{lang}"
     path = export_image(canvas, out_dir, name, dcfg)
