@@ -21,11 +21,14 @@ _font_cache: dict = {}
 # ⚠️ زموږ ټول شکل‌ورکول (RTL) پر Pillow-libraqm ولاړ دي. که راقم نه وي، Pillow
 # د `direction=` لپاره یوه ګونګه `KeyError` غورځوي او هر ډیزاین ماتیږي.
 _RAQM_HINT = (
-    "د Pillow سره libraqm نشته — د پښتو/فارسي شکل‌ورکول (RTL) کار نه کوي.\n"
-    "  حل: د مخزن Dockerfile وکاروه (Railway → Settings → Build → Dockerfile)، "
-    "یا Pillow د wheel څخه بیا نصب کړه:  pip install --force-reinstall "
-    "--only-binary=Pillow Pillow\n"
-    "  Pillow was built without libraqm; RTL text shaping cannot work."
+    "د Pillow راقم ناکاره دی — د پښتو/فارسي شکل‌ورکول (RTL) کار نه کوي.\n"
+    "  لامل: راقم او harfbuzz د Pillow د wheel دننه دي، خو **fribidi** نه —\n"
+    "  راقم یې د چلولو پر مهال په dlopen(\"libfribidi.so.0\") لټوي، نو باید د\n"
+    "  سیسټم پر انځور موجود وي. سپک (slim) انځورونه یې نه لري.\n"
+    "  حل: libfribidi0 نصب کړه  →  apt-get install -y libfribidi0\n"
+    "       (یا د مخزن Dockerfile وکاروه — دمخه یې لري).\n"
+    "  Pillow vendors raqm+harfbuzz but dlopens libfribidi.so.0 at runtime; "
+    "install libfribidi0."
 )
 
 

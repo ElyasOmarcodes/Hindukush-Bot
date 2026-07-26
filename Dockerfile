@@ -1,25 +1,23 @@
 # د Hindukush-Bot د چلولو انځور (Railway / هر Docker کوربه).
 #
-# ⚠️ ولې Dockerfile؟
+# ⚠️ ولې Dockerfile؟  — د libraqm/fribidi کیسه
 # زموږ ټول د پښتو/فارسي (RTL) شکل‌ورکول د Pillow پر **libraqm** ولاړ دي —
 # `direction="rtl"` پرته له راقم کار نه کوي.
 #
-# د Pillow رسمي manylinux wheelونه راقم **په خپله دننه** لري (statically
-# vendored — ځکه `pillow.libs/` کې جلا libraqm.so نه لیدل کیږي، خو
-# `_imagingft` کې د راقم سمبولونه شته). خو کله چې جوړوونکی Pillow **له
-# سرچینې (sdist)** جوړ کړي — لکه چې د Railway پر اتومات builder وشول — راقم
-# یوازې هغه وخت شاملیږي چې د سیسټم libraqm-dev سرلیکونه موجود وي؛ نه‌نو ورک شي
-# او هر ډیزاین ماتیږي:
-#     KeyError: setting text direction ... is not supported without libraqm
+# د Pillow رسمي manylinux wheelونه راقم او harfbuzz **دننه** لري (vendored)،
+# خو **fribidi نه**. راقم fribidi د چلولو پر مهال په `dlopen("libfribidi.so.0")`
+# لټوي — یعنې دا کتابتون باید **د سیسټم** پر انځور موجود وي.
+#   • زموږ پر کمپیوټر `libfribidi0` نصب دی → راقم کار کوي.
+#   • د Railway اتومات انځور او `python:*-slim` کې fribidi **نشته** → راقم
+#     ناکاره کیږي او هر ډیزاین ماتیږي:
+#       KeyError: setting text direction ... is not supported without libraqm
 #
-# نو دلته دوه شیان ډاډمن کوو:
-#   ۱. `--only-binary=Pillow` → pip باید wheel واخلي؛ که ونه موندل شي، **خطا**
-#      ورکړي، نه دا چې په چوپه خوله له سرچینې جوړ کړي.
-#   ۲. د جوړولو پر مهال د راقم چک → ماته-انځور هیڅکله deploy نشي.
+# نو یوازینی اړین ګام: **libfribidi0 نصب کړه**. (راقم او harfbuzz دمخه د wheel
+# دننه دي — جلا نصب ته اړتیا نشته.)
 #
-# Official Pillow manylinux wheels vendor raqm statically; a source build drops
-# it. Force the wheel and assert raqm at build time so a broken image can never
-# ship.
+# Pillow's manylinux wheels vendor raqm + harfbuzz but dlopen libfribidi.so.0
+# at runtime, so the system must provide it. Slim images don't — hence the
+# "not supported without libraqm" failures. Installing libfribidi0 fixes it.
 
 FROM python:3.12-slim-bookworm
 
@@ -27,9 +25,16 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
+# ⚠️ دا کرښه مه لرې کوه — پرته له دې راقم ناکاره او ټول ډیزاینونه ماتیږي.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libfribidi0 \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 COPY requirements.txt ./
+# Pillow یوازې له wheel (که wheel ونه موندل شي، pip خطا ورکوي — نه دا چې چوپ
+# له سرچینې جوړ کړي)، بیا د راقم چک — چې ماته-انځور هیڅکله deploy نشي.
 RUN pip install --upgrade pip \
     && pip install --only-binary=Pillow -r requirements.txt \
     && python -c "import sys; from PIL import features; ok = features.check('raqm'); print('raqm:', features.version('raqm') if ok else 'MISSING'); sys.exit(0 if ok else 1)"
