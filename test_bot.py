@@ -579,13 +579,106 @@ def test_progress_does_not_sleep_but_skips_early_edits():
     assert bot.edits >= 1              # وروستی حالت تل په زور ښکاري
 
 
-def test_summary_lists_sent_and_missing_languages():
-    from modules.commands import _summary
+def test_summary_and_missing_note():
+    """لنډیز د ژوندي پیغام دننه؛ د نشتې ژبې خبرتیا جلا (دورې وروسته پاتې کیږي)."""
+    from modules.commands import _missing_note, _summary
     s = _summary(2, ["ps", "fa"])
-    assert "پښتو" in s and "فارسي" in s
-    assert "انګلیسي" in s and "نه و راستولی" in s
-    full = _summary(3, ["ps", "fa", "en"])
-    assert "نه و راستولی" not in full
+    assert "پښتو" in s and "فارسي" in s and "۲" in s
+
+    note = _missing_note(["ps", "fa"])
+    assert note and "انګلیسي" in note and "نه و راستولی" in note
+    assert _missing_note(["ps", "fa", "en"]) is None
+
+
+def test_progress_start_sends_no_reply_keyboard():
+    """⚠️ regression: ReplyKeyboardMarkup د پیغام د edit کولو مخه نیسي.
+
+    که د پرمختګ پیغام له بوټ-کیبورډ سره ولیږل شي، ټلګرام یې بیا نه تازه کوي او
+    ژوندی حالت **جامد** پاتې کیږي. نو start() باید هیڅ reply_markup ونه لیږي.
+    """
+    import asyncio
+    import inspect
+    from modules.progress import Progress
+
+    assert "reply_markup" not in inspect.signature(Progress.start).parameters
+
+    seen = {}
+
+    class _M:
+        def __init__(self, i):
+            self.message_id = i
+
+    class _Bot:
+        async def send_message(self, cid, text=None, **k):
+            seen.update(k)
+            return _M(7)
+
+    async def go():
+        await Progress(_Bot(), 1).start()
+
+    asyncio.run(go())
+    assert seen.get("reply_markup") is None
+
+
+def test_progress_delete_removes_live_message():
+    """د بریالۍ دورې وروسته ژوندی پیغام ړنګیږي."""
+    import asyncio
+    from modules.progress import Progress
+
+    deleted = []
+
+    class _M:
+        def __init__(self, i):
+            self.message_id = i
+
+    class _Bot:
+        async def send_message(self, cid, text=None, **k):
+            return _M(42)
+
+        async def edit_message_text(self, **k):
+            return _M(42)
+
+        async def delete_message(self, chat_id=None, message_id=None):
+            deleted.append(message_id)
+
+    async def go():
+        p = Progress(_Bot(), 1, min_interval=0.0)
+        await p.start()
+        await p.delete()
+        await p.delete()  # دوهم ځل هیڅ نه کوي
+
+    asyncio.run(go())
+    assert deleted == [42]
+
+
+def test_progress_edit_falls_back_without_markdown():
+    """که Markdown پارس ناکام شي، بې فارمټ بیا هڅه کیږي (جامد نه پاتې کیږي)."""
+    import asyncio
+    from modules.progress import Progress
+
+    tries = []
+
+    class _M:
+        def __init__(self, i):
+            self.message_id = i
+
+    class _Bot:
+        async def send_message(self, cid, text=None, **k):
+            return _M(1)
+
+        async def edit_message_text(self, **k):
+            tries.append(k.get("parse_mode"))
+            if k.get("parse_mode"):
+                raise RuntimeError("Can't parse entities")
+            return _M(1)
+
+    async def go():
+        p = Progress(_Bot(), 1, min_interval=0.0)
+        await p.start()
+        await p.step(1)
+
+    asyncio.run(go())
+    assert tries == ["Markdown", None]
 
 
 def test_rejected_reaction_emoji_is_not_retried():

@@ -138,26 +138,46 @@ class Progress:
                 chat_id=self.chat_id, message_id=self.msg_id,
                 text=text, parse_mode="Markdown",
             )
-        except Exception as err:  # noqa: BLE001 - "not modified"/flood عادي دي
-            logger.debug("د پرمختګ تازه کول: %s", err)
+            return
+        except Exception as err:  # noqa: BLE001
+            msg = str(err)
+            if "not modified" in msg.lower():
+                return  # عادي — هماغه متن دی
+            # ⚠️ دا خطا پخوا په debug کې وه، نو جامد پیغام یې پټ ساتلی و.
+            logger.warning("د پرمختګ تازه کول ناکام: %s — بې Markdown بیا هڅه", msg)
+        try:  # ښایي د Markdown پارس ستونزه وي — بې فارمټ یې ولیږه
+            await self.bot.edit_message_text(
+                chat_id=self.chat_id, message_id=self.msg_id, text=text,
+            )
+        except Exception as err:  # noqa: BLE001
+            logger.warning("د پرمختګ تازه کول بیا هم ناکام: %s", err)
 
-    async def start(self, reply_markup=None) -> None:
+    async def start(self) -> None:
         """د پرمختګ پیغام ولیږه.
 
-        ``reply_markup`` د بوټ-کیبورډ بیا-ټاکلو لپاره دی: د دورې پای کې بېل
-        پیغام نه لیږو، نو منو همدلته بیرته اصلي حالت ته ځي (ټلګرام کیبورډ یوازې
-        د یوه پیغام سره بدلولی شي).
+        ⚠️ دلته **reply_markup نه ورکوو**. که پیغام له ReplyKeyboardMarkup سره
+        ولیږل شي، وروسته یې `editMessageText` نه مني — پیغام جامد پاتې کیږي.
+        منو جلا بیا ټاکل کیږي (commands._restore_menu).
         """
         self._started = time.monotonic()
         try:
             m = await self.bot.send_message(
                 self.chat_id, self._render(), parse_mode="Markdown",
-                reply_markup=reply_markup,
             )
             self.msg_id = m.message_id
             self._last_edit = time.monotonic()
         except Exception as err:  # noqa: BLE001
             logger.warning("د پرمختګ پیغام پیل ناکام: %s", err)
+
+    async def delete(self) -> None:
+        """ژوندی پیغام ړنګ کړه — د بریالۍ دورې وروسته چټ پاک پاتې شي."""
+        if self.msg_id is None:
+            return
+        try:
+            await self.bot.delete_message(chat_id=self.chat_id, message_id=self.msg_id)
+        except Exception as err:  # noqa: BLE001
+            logger.debug("د پرمختګ پیغام ړنګول: %s", err)
+        self.msg_id = None
 
     def note(self, idx: int, text: str) -> None:
         """یوه ګام ته اضافي یادښت ورکړه (لکه د ژبې نوم یا شمېر)."""

@@ -102,19 +102,37 @@ def missing_langs(done) -> list[str]:
 
 
 def _summary(count: int, done) -> str:
-    """د دورې لنډیز — څو انځورونه، کومې ژبې، او کومه ژبه نه وه راغلې.
-
-    Goes inside the live progress message (no separate message), so the user
-    still learns which language was missing without any extra chatter.
-    """
+    """د دورې لنډیز — څو انځورونه او کومې ژبې (د ژوندي پیغام دننه)."""
     have = [LANG_NAMES[c] for c in ALL_LANGS if c in set(done)]
-    line = f"📤 *{fa_digits(count)}* انځورونه ولیږل شول — {'، '.join(have)}"
+    return f"📤 *{fa_digits(count)}* انځورونه ولیږل شول — {'، '.join(have)}"
+
+
+def _missing_note(done) -> str | None:
+    """که کومه ژبه نه وه راغلې، هغه خبرتیا چې د دورې وروسته پاتې کیږي."""
     names = missing_langs(done)
-    if names:
-        logger.info("د دې ژبو راپور نه و راغلی: %s", "، ".join(names))
-        line += ("\n⚠️ د «" + "» او «".join(names) + "» راپور مو نه و راستولی — "
-                 "ډیزاین یې جوړ نشو.")
-    return line
+    if not names:
+        return None
+    logger.info("د دې ژبو راپور نه و راغلی: %s", "، ".join(names))
+    return ("⚠️ د «" + "» او «".join(names) + "» راپور مو نه و راستولی — "
+            "ډیزاین یې جوړ نشو.")
+
+
+async def _restore_menu(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
+                        text: str | None = None) -> None:
+    """منو بیرته اصلي حالت ته وګرځوه.
+
+    ټلګرام د بوټ-کیبورډ یوازې د یوه پیغام سره بدلولی شي. که ویلو ته څه وي
+    (لکه د نشتې ژبې خبرتیا) هماغه پیغام یې وړي؛ نه‌نو یو تش پیغام لیږو او
+    **سمدلاسه یې ړنګوو** — کیبورډ پاتې کیږي خو چټ کې هیڅ نه پاتې کیږي.
+    """
+    try:
+        m = await context.bot.send_message(
+            chat_id, text or "🛠", reply_markup=main_keyboard()
+        )
+        if not text:
+            await context.bot.delete_message(chat_id=chat_id, message_id=m.message_id)
+    except Exception as err:  # noqa: BLE001 - منو بیا ټاکل حیاتي نه دي
+        logger.debug("د منو بیا ټاکل: %s", err)
 
 
 def _state(context: ContextTypes.DEFAULT_TYPE) -> BotState:
@@ -348,12 +366,16 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if errors:
             await q.edit_message_text("⚠️ د اعتبار ستونزه:\n- " + "\n- ".join(errors))
             return
-        # د تایید بټنې لرې کړه (دوه ځله کلیک ونه شي) — نوی پیغام نه لیږو.
+        # د «پکیج خلاصه» پیغام بشپړ ړنګ کړه — چټ پاک پاتې شي.
+        chat_id = q.message.chat_id
         try:
-            await q.edit_message_reply_markup(reply_markup=None)
-        except Exception:  # noqa: BLE001
-            pass
-        await run_pipeline(context, q.message.chat_id)
+            await q.delete_message()
+        except Exception:  # noqa: BLE001 - ړنګول ناکام؛ لږ تر لږه بټنې لرې کړه
+            try:
+                await q.edit_message_reply_markup(reply_markup=None)
+            except Exception:  # noqa: BLE001
+                pass
+        await run_pipeline(context, chat_id)
 
 
 async def _render_designs(context, data: dict, news_image, pkg_dir: Path, state: BotState, prog: Progress) -> list[Path]:
@@ -430,7 +452,8 @@ async def run_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None
         min_interval=state.config.design.progress_min_interval,
         title="📰 خبر",
     )
-    await prog.start(reply_markup=main_keyboard())
+    note: str | None = None
+    await prog.start()
     try:
         await prog.step(0)  # پکیج ترلاسه شو
         reply_to = first_text_message_id(state)
@@ -457,6 +480,8 @@ async def run_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None
         logger.info("%d انځورونه ګروپ ته ولیږل شول", len(paths))
         done = [lg["code"] for lg in LANGS if (data.get(lg["title_key"]) or "").strip()]
         await prog.finish(ok=True, summary=_summary(len(paths), done))
+        await prog.delete()          # بریالی — ژوندی پیغام ړنګ کړه
+        note = _missing_note(done)
     except Exception as err:  # noqa: BLE001
         logger.error("د pipeline خطا: %s", err, exc_info=True)
         await prog.finish(ok=False, err=str(err))
@@ -465,6 +490,7 @@ async def run_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None
         state.reset()
         state.listening = False
         state.mode = "news"
+        await _restore_menu(context, chat_id, note)
 
 
 async def run_urgent_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
@@ -477,7 +503,8 @@ async def run_urgent_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) 
         steps=URGENT_PROGRESS_STEPS,
         title="🔴 عاجل خبر",
     )
-    await prog.start(reply_markup=main_keyboard())
+    note: str | None = None
+    await prog.start()
     try:
         await prog.step(0)
         reply_to = first_text_message_id(state)
@@ -497,6 +524,8 @@ async def run_urgent_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) 
         await _send_designs(context, chat_id, paths, reply_to)
         logger.info("%d عاجل انځورونه ولیږل شول", len(paths))
         await prog.finish(ok=True, summary=_summary(len(paths), titles.keys()))
+        await prog.delete()          # بریالی — ژوندی پیغام ړنګ کړه
+        note = _missing_note(titles.keys())
     except Exception as err:  # noqa: BLE001
         logger.error("د عاجل pipeline خطا: %s", err, exc_info=True)
         await prog.finish(ok=False, err=str(err))
@@ -504,6 +533,7 @@ async def run_urgent_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) 
         state.reset()
         state.listening = False
         state.mode = "news"
+        await _restore_menu(context, chat_id, note)
 
 
 async def _render_quotes(context, quotes: dict, person, pkg_dir: Path, state: BotState, prog: Progress) -> list[Path]:
@@ -533,7 +563,8 @@ async def run_quote_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -
         steps=QUOTE_PROGRESS_STEPS,
         title="💬 نقل قول",
     )
-    await prog.start(reply_markup=main_keyboard())
+    note: str | None = None
+    await prog.start()
     try:
         await prog.step(0)
         reply_to = first_text_message_id(state)
@@ -555,6 +586,8 @@ async def run_quote_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -
         await _send_designs(context, chat_id, paths, reply_to)
         logger.info("%d نقل قول انځورونه ولیږل شول", len(paths))
         await prog.finish(ok=True, summary=_summary(len(paths), quotes.keys()))
+        await prog.delete()          # بریالی — ژوندی پیغام ړنګ کړه
+        note = _missing_note(quotes.keys())
     except Exception as err:  # noqa: BLE001
         logger.error("د نقل قول pipeline خطا: %s", err, exc_info=True)
         await prog.finish(ok=False, err=str(err))
@@ -562,3 +595,4 @@ async def run_quote_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -
         state.reset()
         state.listening = False
         state.mode = "news"
+        await _restore_menu(context, chat_id, note)
