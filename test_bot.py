@@ -543,8 +543,8 @@ def test_progress_failure_marks_the_failed_step():
     assert "هیڅ عاجل انځور جوړ نشو" in bot.last
 
 
-def test_progress_does_not_sleep_but_skips_early_edits():
-    """تازه کول کار نه ځنډوي — ډیر ژر تازه کول پریښودل کیږي، نه ویده کیدل."""
+def test_progress_never_sleeps_in_the_pipeline():
+    """تازه کول کار نه ځنډوي — د پایپ‌لاین دننه هیڅ ویده کیدل نشته."""
     import asyncio
     import time as _t
     from modules.progress import Progress
@@ -567,7 +567,7 @@ def test_progress_does_not_sleep_but_skips_early_edits():
     bot = _Bot()
 
     async def go():
-        p = Progress(bot, 1, min_interval=5.0)  # لوړ حد → منځني تازه کول پریږدي
+        p = Progress(bot, 1, min_interval=5.0)  # لوړ حد
         await p.start()
         for i in range(6):
             await p.step(i)
@@ -577,6 +577,88 @@ def test_progress_does_not_sleep_but_skips_early_edits():
     asyncio.run(go())
     assert _t.monotonic() - t0 < 1.0   # هیڅ ویده کیدل نشته
     assert bot.edits >= 1              # وروستی حالت تل په زور ښکاري
+
+
+def test_progress_ticker_keeps_message_alive_during_a_long_step():
+    """⚠️ regression: اوږد ګام (جیمنای) کې پیغام باید **جامد نشي**.
+
+    پخوا به ژر تازه‌کول غورځول کیدل، نو د اوږد انتظار پر مهال به پیغام په ۰٪
+    ولاړ و او بیا به یې په پای کې ټول ګامونه یو ځل ټک کړل. اوس د شالید ټیکر
+    تېر وخت هم ځغلوي، نو د انتظار پر مهال هم حرکت ښکاري.
+    """
+    import asyncio
+    from modules.progress import Progress
+
+    frames = []
+
+    class _M:
+        def __init__(self, i):
+            self.message_id = i
+
+    class _Bot:
+        async def send_message(self, cid, text=None, **k):
+            frames.append(text)
+            return _M(1)
+
+        async def edit_message_text(self, text=None, **k):
+            frames.append(text)
+            return _M(1)
+
+    class _Tick(Progress):
+        """د ټیسټ لپاره: تېر وخت هره ثانیه بدلیږي — دلته یې ژر بدلوو."""
+
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self._n = 0
+
+        def _render(self, *a, **k):
+            self._n += 1
+            return super()._render(*a, **k) + f"\n{self._n}"
+
+    async def go():
+        p = _Tick(_Bot(), 1, min_interval=0.01)
+        p.tick_interval = 0.02
+        await p.start()
+        await p.step(1)           # جیمنای پیل شو
+        await asyncio.sleep(0.3)  # ← اوږد انتظار، هیڅ step نه راځي
+        await p.finish(ok=True)
+
+    asyncio.run(go())
+    # د انتظار پر مهال ټیکر څو ځله تازه کړی — نه یوازې پیل او پای.
+    assert len(frames) >= 5, f"جامد و: یوازې {len(frames)} فریمه"
+
+
+def test_progress_ticker_is_stopped_after_finish_and_delete():
+    """ټیکر باید د دورې وروسته پاتې نشي (شالید کې روان)."""
+    import asyncio
+    from modules.progress import Progress
+
+    class _M:
+        def __init__(self, i):
+            self.message_id = i
+
+    class _Bot:
+        async def send_message(self, cid, text=None, **k):
+            return _M(1)
+
+        async def edit_message_text(self, **k):
+            return _M(1)
+
+        async def delete_message(self, **k):
+            pass
+
+    async def go():
+        p = Progress(_Bot(), 1, min_interval=0.05)
+        await p.start()
+        assert p._ticker is not None
+        await p.finish(ok=True)
+        assert p._ticker is None
+        p2 = Progress(_Bot(), 1, min_interval=0.05)
+        await p2.start()
+        await p2.delete()
+        assert p2._ticker is None
+
+    asyncio.run(go())
 
 
 def test_summary_and_missing_note():
