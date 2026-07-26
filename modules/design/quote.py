@@ -49,23 +49,26 @@ def _prepare_person(path, w: int, h: int):
     return img.crop((left, top, left + w, top + h))
 
 
-def _draw_aligned_line(draw, words, widths, font, box, y, is_english, gi, start_idx, normal, highlight):
-    """یوه کرښه — RTL ښي-تنظیم / LTR کیڼ-تنظیم (بې مرکز)، د کلمه‌په‌کلمه هایلایټ سره."""
+def _draw_aligned_line(draw, words, widths, font, box, y, is_english, gi, start_idx, normal, highlight, gap):
+    """یوه کرښه — RTL ښي-تنظیم / LTR کیڼ-تنظیم (بې مرکز)، د کلمه‌په‌کلمه هایلایټ سره.
+
+    ``gap`` د کلمو ترمنځ فاصله ده — د justify شوې کرښې لپاره غزیدلې (چې کرښه
+    دقیقاً بشپړ عرض ډکه کړي)، نه‌نو طبیعي فاصله.
+    """
     bx, _, bw, _ = box
     direction = _direction(is_english)
-    space_w = text_width(font, " ", is_english) or font.getlength(" ")
     if is_english:
         x = bx
         for w, ww in zip(words, widths):
             draw.text((x, y), w, font=font, fill=highlight if gi >= start_idx else normal, direction=direction)
-            x += ww + space_w
+            x += ww + gap
             gi += 1
     else:
         x = bx + bw
         for w, ww in zip(words, widths):
             x -= ww
             draw.text((x, y), w, font=font, fill=highlight if gi >= start_idx else normal, direction=direction)
-            x -= space_w
+            x -= gap
             gi += 1
     return gi
 
@@ -93,15 +96,19 @@ def _draw_title(canvas, text: str, font_path: str, dcfg, is_english: bool) -> No
     else:
         center_y = by + (bh - total_h) // 2
         y = (by + center_y) // 2  # د پورته او مرکز منځ
+    space_w = text_width(font, " ", is_english) or font.getlength(" ")
     gi = 0
     for i, line in enumerate(lines):
         is_last = i == len(lines) - 1
         # RTL نا-وروستۍ کرښه → کشیده (justify)؛ وروستۍ کرښه یوازې ښي-تنظیم.
-        if not is_english and not is_last:
+        justify = not is_english and not is_last
+        if justify:
             line = justify_line(line, lambda t: text_width(font, t, is_english), bw, seed=i)
         words = line.split()
         widths = [text_width(font, w, is_english) for w in words]
-        gi = _draw_aligned_line(draw, words, widths, font, box, y, is_english, gi, start_idx, normal, highlight)
+        # د کشیده وروسته پاتې تشه د کلمو ترمنځ ووېشه — هیڅ خالي فضا نه پاتې کیږي.
+        gap = (bw - sum(widths)) / (len(words) - 1) if justify and len(words) > 1 else space_w
+        gi = _draw_aligned_line(draw, words, widths, font, box, y, is_english, gi, start_idx, normal, highlight, gap)
         y += lh
 
 

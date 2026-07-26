@@ -44,9 +44,13 @@ def _draw_line(draw, words, widths, font, box, y, is_english, justify, gi, start
     space_w = text_width(font, " ", is_english) or font.getlength(" ")
     n = len(words)
     if justify and n > 1:
+        # پاتې تشه (د کشیده وروسته) د کلمو ترمنځ ووېشه — کرښه دقیقاً بشپړ عرض ډکوي.
         gap = (bw - sum(widths)) / (n - 1)
         offset = 0.0
-    else:  # وروستۍ کرښه یا یوه‌کلمه‌یي → مرکز
+    elif justify:  # یوه‌کلمه‌یي — کشیده یې ډکه کړې، یوازې څنډې ته ونښلوه
+        gap = space_w
+        offset = 0.0
+    else:  # وروستۍ کرښه → مرکز
         gap = space_w
         offset = (bw - (sum(widths) + space_w * (n - 1))) / 2
 
@@ -88,15 +92,16 @@ def _draw_title(canvas, text: str, font_path: str, dcfg, is_english: bool) -> No
     gi = 0
     for i, line in enumerate(lines):
         is_last = i == len(lines) - 1
-        # RTL (پښتو/فارسي) نا-وروستۍ کرښه → کشیده justify (زموږ منطق).
+        # RTL (پښتو/فارسي) نا-وروستۍ کرښه → کشیده + د پاتې تشې وېش (بشپړ عرض).
         # انګلیسي → هیڅ justify نه؛ ټول لاینونه مرکز (center-center).
-        if not is_english and not is_last:
+        justify = not is_english and not is_last
+        if justify:
             line = justify_line(line, lambda t: text_width(font, t, is_english), bw, seed=i)
         words = line.split()
         widths = [text_width(font, w, is_english) for w in words]
         gi = _draw_line(
             draw, words, widths, font, box, y, is_english,
-            justify=False,  # انګلیسي justify نه کوي؛ RTL کشیده دمخه ډک کړی
+            justify=justify,
             gi=gi, start_idx=start_idx, normal=normal, highlight=highlight,
         )
         y += lh

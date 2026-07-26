@@ -79,6 +79,34 @@ def active_keyboard() -> ReplyKeyboardMarkup:
     return _kb([[BTN_COMPLETE], [BTN_CLEAN, BTN_CANCEL], [BTN_BACK]])
 
 
+# د ژبو پښتو نومونه — د «کومه ژبه ونه لیږل شوه» خبرتیا لپاره.
+LANG_NAMES = {"ps": "پښتو", "fa": "فارسي", "en": "انګلیسي"}
+ALL_LANGS = ("ps", "fa", "en")
+
+
+def missing_langs(done) -> list[str]:
+    """هغه ژبې چې راپور یې نه دی راغلی — د پښتو نومونو لیست."""
+    have = set(done)
+    return [LANG_NAMES[code] for code in ALL_LANGS if code not in have]
+
+
+async def _notify_missing(context: ContextTypes.DEFAULT_TYPE, chat_id: int, done) -> None:
+    """پکیج تل ۳ متني راپورونو ته اړتیا لري — د نشتو ژبو خبرتیا ورکړه.
+
+    Languages with no report are simply not designed; tell the user which ones
+    were missing so nothing fails silently.
+    """
+    names = missing_langs(done)
+    if not names:
+        return
+    logger.info("د دې ژبو راپور نه و راغلی: %s", "، ".join(names))
+    await context.bot.send_message(
+        chat_id,
+        "ℹ️ د «" + "» او «".join(names) + "» ژبې راپور مو نه دی راستولی — "
+        "نو د هغې ژبې ډیزاین جوړ نشو.",
+    )
+
+
 def _state(context: ContextTypes.DEFAULT_TYPE) -> BotState:
     return context.application.bot_data["state"]
 
@@ -393,6 +421,8 @@ async def run_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None
         await _send_designs(context, chat_id, paths)
         logger.info("%d انځورونه ګروپ ته ولیږل شول", len(paths))
         await prog.finish(ok=True)
+        done = [lg["code"] for lg in LANGS if (data.get(lg["title_key"]) or "").strip()]
+        await _notify_missing(context, chat_id, done)
     except Exception as err:  # noqa: BLE001
         logger.error("د pipeline خطا: %s", err, exc_info=True)
         await prog.finish(ok=False, err=str(err))
@@ -435,6 +465,7 @@ async def run_urgent_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) 
         await _send_designs(context, chat_id, paths)
         logger.info("%d عاجل انځورونه ولیږل شول", len(paths))
         await prog.finish(ok=True)
+        await _notify_missing(context, chat_id, titles.keys())
     except Exception as err:  # noqa: BLE001
         logger.error("د عاجل pipeline خطا: %s", err, exc_info=True)
         await prog.finish(ok=False, err=str(err))
@@ -495,6 +526,7 @@ async def run_quote_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -
         await _send_designs(context, chat_id, paths)
         logger.info("%d نقل قول انځورونه ولیږل شول", len(paths))
         await prog.finish(ok=True)
+        await _notify_missing(context, chat_id, quotes.keys())
     except Exception as err:  # noqa: BLE001
         logger.error("د نقل قول pipeline خطا: %s", err, exc_info=True)
         await prog.finish(ok=False, err=str(err))

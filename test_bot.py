@@ -5,7 +5,9 @@ the pure logic: filename sanitizing, config loading/overlay, buffer validation
 and limits, prompt building and JSON extraction.
 """
 
+import json
 import os
+from pathlib import Path
 
 import pytest
 
@@ -324,7 +326,63 @@ def test_kashida_not_applied_to_english_measure():
     assert TATWEEL not in out
 
 
-def test_allowlist_configured():
+def test_kashida_never_breaks_lam_alef():
+    """د «ل» او «ا» ترمنځ کشیده منع ده: تلـاش ❌ / تلاش ✅"""
+    from modules.design.justify import justify_line, TATWEEL, _can_insert_at
+    line = "تلاش تلاش تلاش تلاش"
+    for i, ch in enumerate(line):
+        if ch == "ل" and i + 1 < len(line) and line[i + 1] in "اآأإٱ":
+            assert not _can_insert_at(line, i)
+    out = justify_line(line, lambda t: len(t), target_w=len(line) + 20)
+    assert "ل" + TATWEEL + "ا" not in out
+
+
+def test_kashida_uses_every_slot_not_stopping_at_first_overshoot():
+    """یو slot چې ډک شي، دوره نه ودریږي — نور slotونه هم ډکیږي (تشه لږیږي)."""
+    from modules.design.justify import justify_line
+    line = "له اسرائیل سره د امنیتي"
+    target = len(line) + 10
+    out = justify_line(line, lambda t: len(t), target_w=target)
+    # پاتې تشه باید تر ۱ کرکټر زیاته نه وي (پخوا یوځل ماتیدل ډیره تشه پریښوده).
+    assert target - len(out) <= 1
+    assert len(out) <= target
+
+
+def test_kashida_single_word_line_gets_bigger_cap():
+    """یوه‌کلمه‌یي کرښه د فاصلو له لارې نشي غزیدلی → کشیده ډیره اجازه لري."""
+    from modules.design.justify import justify_line, MAX_KASHIDA_PER_SLOT
+    word = "امنیتي"
+    out = justify_line(word, lambda t: len(t), target_w=len(word) + 30)
+    # تر یوه slot × ۴ (زوړ سقف) زیات کشیده ور اضافه شوی.
+    assert len(out) - len(word) > MAX_KASHIDA_PER_SLOT
+
+
+def test_quote_sizes_from_settings_json():
+    """د نقل قول هره برخه خپل سایز په settings.json کې جلا لري."""
+    cfg = load_config("config/settings.json")
+    assert cfg.design.quote_title_size == 65
+    assert cfg.design.quote_name_size == 35
+    assert cfg.design.quote_rank_size == 40
+    raw = json.loads(Path("config/settings.json").read_text(encoding="utf-8"))
+    for key in ("quote_title_size", "quote_name_size", "quote_rank_size"):
+        assert key in raw["design"], f"{key} باید په settings.json کې جلا درج وي"
+
+
+def test_missing_langs_reported():
+    """کومې ژبې راپور نه وي راغلی، هغه یې کارونکي ته نوم په نوم وایي."""
+    from modules.commands import missing_langs
+    assert missing_langs(["ps"]) == ["فارسي", "انګلیسي"]
+    assert missing_langs(["ps", "fa", "en"]) == []
+    assert missing_langs({"ps": 1, "en": 2}.keys()) == ["فارسي"]
+
+
+def test_allowlist_comes_from_env_not_settings(monkeypatch):
+    """د مجازو لیست په settings.json کې نه — د ADMIN_USER_IDS راز/متغیر څخه راځي."""
+    monkeypatch.delenv("ADMIN_USER_IDS", raising=False)
+    cfg = load_config("config/settings.json")
+    assert cfg.admin_user_ids == []  # تش = هرڅوک (dev)
+
+    monkeypatch.setenv("ADMIN_USER_IDS", "535727838, 5730846799,8416890401")
     cfg = load_config("config/settings.json")
     assert cfg.admin_user_ids == [535727838, 5730846799, 8416890401]
 

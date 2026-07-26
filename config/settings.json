@@ -2,7 +2,7 @@
   "telegram": {
     "bot_token": "",
     "group_id": 0,
-    "admin_user_ids": [535727838, 5730846799, 8416890401],
+    "admin_user_ids": [],
     "packages_dir": "data/packages",
     "pending_dir": "data/pending"
   },
@@ -72,6 +72,23 @@
     "urgent_highlight_fraction": 0.40,
     "urgent_date_font": "couriernew.ttf",
     "urgent_date_size": 54,
-    "urgent_date_color_hex": "DA0404"
+    "urgent_date_color_hex": "DA0404",
+
+    "quote_canvas_size": 1353,
+
+    "quote_title_font": "FModam-FBold[@mimvid].ttf",
+    "quote_title_size": 65,
+    "quote_title_color_hex": "FFFFFF",
+    "quote_highlight_color_hex": "FEA20E",
+    "quote_highlight_fraction": 0.40,
+    "quote_title_fill_threshold": 0.6,
+
+    "quote_name_font": "FModam-FBold[@mimvid].ttf",
+    "quote_name_size": 35,
+    "quote_name_color_hex": "D8DFE7",
+
+    "quote_rank_font": "FModam-FRegular[@mimvid].ttf",
+    "quote_rank_size": 40,
+    "quote_rank_color_hex": "FEB407"
   }
 }

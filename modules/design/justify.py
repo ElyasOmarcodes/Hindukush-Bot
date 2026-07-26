@@ -12,11 +12,16 @@ import random
 
 TATWEEL = "ـ"
 MAX_KASHIDA_PER_SLOT = 4
+# یوه‌کلمه‌یي کرښه د فاصلو له لارې نشي غزیدلی — نو کشیده یې ډیره اجازه لري.
+MAX_KASHIDA_SINGLE_WORD = 12
 
 # هغه توري چې کیڼ لور ته نه نښلي (کشیده نه اخلي کله چې کیڼ (a) وي).
 NON_CONNECTING_LEFT = set("ادذرزژوآأإءؤئةىٰ")
 # هغه توري چې که مخکې (a) وي، کشیده نه ور اضافه کوو.
 FORBIDDEN_PREV = set("ادذرزژږړوءأآإډ")
+# د «لا» رباط (lam-alef) — د ل او ا ترمنځ کشیده رباط ماتوي: تلـاش ❌ / تلاش ✅
+_LAM = "ل"
+_ALEF = set("اآأإٱ")
 _PUNCT = set("!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~،؛؟«»–—−")
 
 
@@ -54,6 +59,9 @@ def _can_insert_at(s: str, idx: int) -> bool:
         return False
     if b == TATWEEL:
         return False
+    # د «لا» رباط مه ماتوه — «تلـاش» ناسم دی، «تلاش» سم دی.
+    if a == _LAM and b in _ALEF:
+        return False
     before, after = s[idx - 1], s[idx + 2]
     if not _is_arabic_letter(before) or not _is_arabic_letter(after):
         return False
@@ -82,6 +90,10 @@ def justify_line(line: str, measure, target_w: float, seed: int | None = None) -
 
     ``measure(text) -> float`` عرض ورکوي (د راقم/فونټ له لارې). که کرښه دمخه پراخه
     وي یا کوم slot نه وي، همغه کرښه راګرځي.
+
+    ⚠️ کله چې یو slot تر target واوړي، **ټوله دوره نه ودریږي** — هغه slot یوازې
+    بند شي او نور slotونه هڅه کوي. په دې سره وروستۍ تشه تر ټولو وړه کیږي؛ پاتې
+    وړه تشه بیا د رسمولو پر مهال د کلمو ترمنځ ویشل کیږي (بشپړ justify).
     """
     if measure(line) >= target_w:
         return line
@@ -92,18 +104,23 @@ def justify_line(line: str, measure, target_w: float, seed: int | None = None) -
     order = slots[:]
     rng.shuffle(order)
     counts: dict = {s: 0 for s in slots}
+    # یوه‌کلمه‌یي کرښه وروسته د فاصلو له لارې نشي غزیدلی → کشیده ته ډیر ځای ورکړه.
+    cap = MAX_KASHIDA_SINGLE_WORD if len(line.split()) == 1 else MAX_KASHIDA_PER_SLOT
 
+    blocked: set = set()
     guard = 0
-    i = 0
     while guard < 20000:
         guard += 1
-        avail = [s for s in order if counts[s] < MAX_KASHIDA_PER_SLOT]
-        if not avail:
-            break
-        slot = avail[i % len(avail)]
-        i += 1
-        counts[slot] += 1
-        if measure(_build(line, counts)) > target_w:
-            counts[slot] -= 1  # وروستی درج بیرته کړه — تر target تیر نشي
+        progressed = False
+        for slot in order:
+            if slot in blocked or counts[slot] >= cap:
+                continue
+            counts[slot] += 1
+            if measure(_build(line, counts)) > target_w:
+                counts[slot] -= 1  # دا slot نور نه ځایېږي — بند یې کړه، بل ته لاړ شه
+                blocked.add(slot)
+                continue
+            progressed = True
+        if not progressed:
             break
     return _build(line, counts)

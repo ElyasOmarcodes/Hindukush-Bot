@@ -19,7 +19,7 @@ Hindukush-Bot/
 ├── run.bat                 # Windows چلونکی
 ├── requirements.txt
 ├── test_bot.py             # یونټ-ټیسټونه (بې شبکې)
-├── .env.example            # د کیلیانو بیلګه (کاپي یې کړه → .env)
+├── env.example             # د کیلیانو **نمونه** (رینیم ته اړتیا نشته)
 ├── config/
 │   └── settings.json       # جوړښتي تنظیمات (بې پټو معلوماتو)
 ├── assets/                 # ټمپلیټونه، فونټونه، د موقعیت PNGونه (فاز ۲)
@@ -53,8 +53,14 @@ Hindukush-Bot/
 ټول پټ معلومات د **چاپیریال متغیرونو** (`.env`) څخه لوستل کیږي — **نه** په
 کوډ کې. `.env` د `.gitignore` کې دی نو عامه نه کیږي.
 
+**GitHub Actions کې** هیڅ فایل جوړولو ته اړتیا نشته — یوازې دا نومونه په
+`Settings → Secrets and variables → Actions` کې ثبت کړه. `env.example` یوازې
+یوه نمونه ده، رینیم یې مه کوه.
+
+یوازې **خپل کمپیوټر** کې:
+
 ```bash
-cp .env.example .env
+cp env.example .env
 ```
 
 بیا `.env` کې ډک کړه:

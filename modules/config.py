@@ -74,14 +74,14 @@ class DesignConfig:
     # ─────────── د نقل قول ډیزاین (شخص انځور + نقل قول + نوم + رتبه) ───────────
     quote_canvas_size: int = 1353
     quote_title_font: str = "FModam-FBold[@mimvid].ttf"
-    quote_title_size: int = 58
+    quote_title_size: int = 65
     quote_title_color_hex: str = "FFFFFF"
     quote_highlight_color_hex: str = "FEA20E"   # لکه د خبر عنوان هایلایټ
     quote_highlight_fraction: float = 0.40      # اخیري ۳۵–۴۵٪
     # که نقل قول د باکس تر دې برخې زیات ډک کړي → پورته پیل؛ نه‌نو د پورته/مرکز منځ.
     quote_title_fill_threshold: float = 0.6
     quote_name_font: str = "FModam-FBold[@mimvid].ttf"
-    quote_name_size: int = 40
+    quote_name_size: int = 35
     quote_name_color_hex: str = "D8DFE7"
     quote_rank_font: str = "FModam-FRegular[@mimvid].ttf"
     quote_rank_size: int = 40
@@ -155,11 +155,15 @@ def load_config(settings_path: str | Path = "config/settings.json") -> Config:
     Load ``settings.json`` and overlay secrets from the environment. Env vars
     always win so a committed ``settings.json`` can safely keep blanks.
     """
-    # .env که موجود وي، ولوله (اختیاري dependency).
+    # `.env` یا `env` که موجود وي، ولوله (اختیاري dependency).
+    # `env.example` یوازې نمونه ده — هیڅکله نه لوستل کیږي.
     try:
         from dotenv import load_dotenv
 
-        load_dotenv()
+        for candidate in (".env", "env"):
+            if Path(candidate).is_file():
+                load_dotenv(candidate)
+                break
     except Exception:  # pragma: no cover - dotenv اختیاري دی
         pass
 
