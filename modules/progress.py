@@ -83,7 +83,9 @@ class Progress:
         # `tick_interval` = د شالید د تازه‌کولو دوره (تېر وخت ځغلوي) — لوړه ده
         # چې د ټلګرام نرخ-حد ته ورنږدې نشو.
         self.min_interval = min_interval
-        self.tick_interval = max(1.5, min_interval)
+        # ⚠️ ټلګرام فی ګروپ ~۲۰ پیغامه/دقیقه پریږدي. ۳ ثانیې = ۲۰/دقیقه —
+        # تر دې ژر، flood control پیل شي او **د فایلونو لیږل ماتیږي**.
+        self.tick_interval = max(3.0, min_interval)
         self.steps = steps or PROGRESS_STEPS
         self.title = title
         self._last_edit = 0.0
@@ -214,6 +216,14 @@ class Progress:
         if self._ticker is not None:
             self._ticker.cancel()
             self._ticker = None
+
+    def pause(self) -> None:
+        """ټیکر ودروه — د مهمو کالونو (لکه د فایلونو لیږل) مخکې.
+
+        د پرمختګ تازه‌کول ښکلا ده؛ د فایلونو لیږل اصل دی. نو د لیږلو پر مهال
+        د نرخ بودجه یوازې فایلونو ته پریږدو.
+        """
+        self._stop_ticker()
 
     async def delete(self) -> None:
         """ژوندی پیغام ړنګ کړه — د بریالۍ دورې وروسته چټ پاک پاتې شي."""

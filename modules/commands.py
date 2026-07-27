@@ -21,6 +21,7 @@ from telegram import (
     ReplyKeyboardMarkup,
     Update,
 )
+from telegram.error import RetryAfter
 from telegram.ext import ApplicationHandlerStop, ContextTypes
 
 from . import funny, gemini
@@ -377,7 +378,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             return
         errors = validate_package(state)
         if errors:
-            await q.edit_message_text("⚠️ د اعتبار ستونزه:\n- " + "\n- ".join(errors))
+            text = "⚠️ د اعتبار ستونزه:\n- " + "\n- ".join(errors)
+            try:
+                await q.edit_message_text(text)
+            except Exception:  # noqa: BLE001 - پیغام ښایي دمخه ړنګ شوی وي
+                await context.bot.send_message(q.message.chat_id, text)
             return
         # د «پکیج خلاصه» پیغام بشپړ ړنګ کړه — چټ پاک پاتې شي.
         chat_id = q.message.chat_id
@@ -422,15 +427,28 @@ async def _send_designs(context, chat_id: int, paths: list[Path],
     def _media():
         return [InputMediaDocument(media=open(p, "rb"), filename=p.name) for p in paths]
 
+    async def _send(**extra):
+        """د flood پر مهال صبر وکړه او بیا هڅه — فایلونه هیڅکله مه غورځوه."""
+        last: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                await context.bot.send_media_group(chat_id=chat_id, media=_media(), **extra)
+                return
+            except RetryAfter as err:
+                last = err
+                wait = float(getattr(err, "retry_after", 5)) + 1
+                logger.warning("د لیږلو نرخ-حد — %.0f ثانیې صبر، بیا هڅه (%d/۳)",
+                               wait, attempt)
+                await asyncio.sleep(wait)
+        raise last if last else RuntimeError("د فایلونو لیږل ناکام")
+
     if reply_to:
         try:
-            await context.bot.send_media_group(
-                chat_id=chat_id, media=_media(), reply_to_message_id=reply_to,
-            )
+            await _send(reply_to_message_id=reply_to)
             return
         except Exception as err:  # noqa: BLE001 - ریپلای ناکام؛ بې ریپلای یې ولیږه
             logger.warning("ریپلای (msg %s) ناکام: %s — بې ریپلای لیږل کیږي", reply_to, err)
-    await context.bot.send_media_group(chat_id=chat_id, media=_media())
+    await _send()
 
 
 async def _render_urgent(context, titles: dict, pkg_dir: Path, state: BotState, prog: Progress) -> list[Path]:
@@ -489,6 +507,7 @@ async def run_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None
             raise RuntimeError("هیڅ انځور جوړ نشو")
 
         await prog.step(7)  # لیږل
+        prog.pause()   # ⚠️ نرخ بودجه فایلونو ته پریږده
         await _send_designs(context, chat_id, paths, reply_to)
         logger.info("%d انځورونه ګروپ ته ولیږل شول", len(paths))
         done = [lg["code"] for lg in LANGS if (data.get(lg["title_key"]) or "").strip()]
@@ -534,6 +553,7 @@ async def run_urgent_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) 
             raise RuntimeError("هیڅ عاجل انځور جوړ نشو")
 
         await prog.step(5)  # لیږل
+        prog.pause()   # ⚠️ نرخ بودجه فایلونو ته پریږده
         await _send_designs(context, chat_id, paths, reply_to)
         logger.info("%d عاجل انځورونه ولیږل شول", len(paths))
         await prog.finish(ok=True, summary=_summary(len(paths), titles.keys()))
@@ -596,6 +616,7 @@ async def run_quote_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -
             raise RuntimeError("هیڅ نقل قول انځور جوړ نشو")
 
         await prog.step(5)  # لیږل
+        prog.pause()   # ⚠️ نرخ بودجه فایلونو ته پریږده
         await _send_designs(context, chat_id, paths, reply_to)
         logger.info("%d نقل قول انځورونه ولیږل شول", len(paths))
         await prog.finish(ok=True, summary=_summary(len(paths), quotes.keys()))

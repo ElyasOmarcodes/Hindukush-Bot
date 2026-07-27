@@ -1159,3 +1159,106 @@ def test_cascade_reports_next_reset_when_everything_is_blocked():
         assert calls == [], "هیڅ کال نه دی پکار — ټول بند دي"
     finally:
         gemini.quota.clear()
+
+
+# ---------- د نرخ-حد (flood) ساتنه ----------
+
+def test_sources_are_extracted_in_parallel():
+    """درې سرچینې یوځای راځي — پرله‌پسې یې ~۱۵–۲۵ ثانیې نیوې."""
+    import asyncio, time
+    from modules.config import Config
+
+    calls = []
+    orig = gemini._cascade
+
+    async def fake(prompt, config):
+        calls.append(prompt[:20])
+        await asyncio.sleep(0.2)
+        if prompt.startswith(gemini.SOURCE_PROMPT[:40]):
+            return "الجزیره"
+        return ('{"text_ps":"پ سرلیک","text_fa":"ف سرتیتر",'
+                '"text_en":"E headline","location":"World"}')
+
+    gemini._cascade = fake
+    try:
+        t0 = time.monotonic()
+        res = asyncio.run(gemini.analyze(["پښتو دی", "فارسی است", "English is"],
+                                         Config(gemini_api_keys=["k"])))
+        elapsed = time.monotonic() - t0
+    finally:
+        gemini._cascade = orig
+
+    assert len(calls) == 4                 # ۱ اصلي + ۳ سرچینې
+    assert elapsed < 0.55, f"پرله‌پسې کار کوي ({elapsed:.2f}s) — باید موازي وي"
+    assert res["source_ps"] and res["source_fa"] and res["source_en"]
+
+
+def test_progress_pause_stops_the_ticker_before_sending():
+    """د فایلونو له لیږلو مخکې ټیکر ودریږي — نرخ بودجه فایلونو ته پاتې شي."""
+    import asyncio
+    from modules.progress import Progress
+
+    class _M:
+        def __init__(self, i):
+            self.message_id = i
+
+    class _Bot:
+        async def send_message(self, cid, text=None, **k):
+            return _M(1)
+
+        async def edit_message_text(self, **k):
+            return _M(1)
+
+    async def go():
+        p = Progress(_Bot(), 1, min_interval=0.05)
+        await p.start()
+        assert p._ticker is not None
+        p.pause()
+        assert p._ticker is None
+
+    asyncio.run(go())
+
+
+def test_ticker_interval_respects_telegram_group_budget():
+    """ټلګرام ~۲۰ پیغامه/دقیقه پریږدي → ټیکر باید تر ۳ ثانیو ژر نه وي."""
+    from modules.progress import Progress
+    for requested in (0.1, 0.8, 1.0, 2.9):
+        p = Progress(None, 1, min_interval=requested)
+        assert p.tick_interval >= 3.0, f"{requested} → {p.tick_interval}"
+        assert 60 / p.tick_interval <= 20
+
+
+def test_send_designs_retries_after_flood_control():
+    """⚠️ regression: flood به د فایلونو لیږل ماتول. اوس صبر او بیا هڅه کیږي."""
+    import asyncio
+    from telegram.error import RetryAfter
+    from modules import commands
+
+    attempts = []
+    sleeps = []
+
+    class _Bot:
+        async def send_media_group(self, chat_id=None, media=None, **kw):
+            attempts.append(kw.get("reply_to_message_id"))
+            if len(attempts) < 3:
+                raise RetryAfter(1)
+            return []
+
+    class _Ctx:
+        bot = _Bot()
+
+    async def _fast_sleep(sec):
+        sleeps.append(sec)
+
+    real_sleep = commands.asyncio.sleep
+    commands.asyncio.sleep = _fast_sleep
+    try:
+        tmp = Path("data/pending"); tmp.mkdir(parents=True, exist_ok=True)
+        f = tmp / "_t.jpg"; f.write_bytes(b"x")
+        asyncio.run(commands._send_designs(_Ctx(), 1, [f], reply_to=99))
+        f.unlink(missing_ok=True)
+    finally:
+        commands.asyncio.sleep = real_sleep
+
+    assert len(attempts) == 3, f"باید بیا هڅه کړې وای: {attempts}"
+    assert sleeps, "باید صبر کړی وای"

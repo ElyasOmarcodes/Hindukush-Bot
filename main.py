@@ -12,6 +12,7 @@ import logging
 from telegram import BotCommand, Update
 from telegram.error import Conflict
 from telegram.ext import (
+    AIORateLimiter,
     Application,
     ApplicationBuilder,
     CallbackQueryHandler,
@@ -74,7 +75,17 @@ async def _post_init(app: Application) -> None:
 
 def build_application(config: Config) -> Application:
     """د config پر بنسټ Application جوړ او handlers ورته ثبت کړه."""
-    app = ApplicationBuilder().token(config.bot_token).post_init(_post_init).build()
+    # ⚠️ د نرخ محدودوونکی — ټلګرام فی ګروپ ~۲۰ پیغامه/دقیقه پریږدي. پرته له دې،
+    # د پرمختګ تازه‌کول د بودجې ډیره برخه خوري او بیا **د فایلونو لیږل** په
+    # «Flood control exceeded» ناکامیږي (په لاګ کې لیدل شوی). دا محدودوونکی
+    # ټول کالونه په کتار کې اچوي او په RetryAfter کې پخپله بیا هڅه کوي.
+    app = (
+        ApplicationBuilder()
+        .token(config.bot_token)
+        .post_init(_post_init)
+        .rate_limiter(AIORateLimiter(max_retries=3))
+        .build()
+    )
 
     # روان حالت په bot_data کې وساته چې ټول handlers ورته لاس رسی ولري.
     app.bot_data["state"] = BotState(config=config)

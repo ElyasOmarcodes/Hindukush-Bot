@@ -7,6 +7,7 @@ and parses the JSON reply robustly.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -764,18 +765,24 @@ async def analyze(texts: list[str], config: Config) -> dict:
             para = para.split("\n")[0].strip()
         _, title = _split_source_title(para)
         result[f"title_{lang}"] = title
-        if not para:
-            result[f"source_{lang}"] = ""
-            continue
-        present[lang] = para
-        # سرچینه د بشپړ راپور څخه (اختصاصي پرامپټ) + د ژبې ډیفالټ که ونه موندل شي.
-        full = _match_full_text(para, reports)
+        result[f"source_{lang}"] = ""
+        if para:
+            present[lang] = para
+
+    # ⚠️ د دریو ژبو سرچینې **یوځای** راباسو (نه یو په یو). دا درې خپلواک کالونه
+    # دي؛ پرله‌پسې یې ~۱۵–۲۵ ثانیې نیوه، اوس د یوه کال په اندازه وخت نیسي.
+    async def _one(lang: str, para: str) -> tuple[str, str]:
         try:
-            src = await extract_source(full, config)
+            return lang, await extract_source(_match_full_text(para, reports), config)
         except Exception as err:  # noqa: BLE001 - سرچینه اختیاري ده
             logger.warning("[%s] د سرچینې استخراج ناکام: %s", lang, err)
-            src = ""
-        result[f"source_{lang}"] = src or _DEFAULT_SOURCE[lang]
+            return lang, ""
+
+    if present:
+        for lang, src in await asyncio.gather(
+            *(_one(lg, para) for lg, para in present.items())
+        ):
+            result[f"source_{lang}"] = src or _DEFAULT_SOURCE[lang]
 
     verify_result(result, present)
     return result

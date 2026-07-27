@@ -58,7 +58,7 @@ class DesignConfig:
     jpeg_quality_min: int = 92
     target_kb: int = 1600
 
-    progress_min_interval: float = 0.8
+    progress_min_interval: float = 1.0
 
     # ─────────── د عاجل خبر ډیزاین (بېل ټمپلیټ، یوازې عنوان + تاریخ) ───────────
     urgent_canvas_size: int = 1561
