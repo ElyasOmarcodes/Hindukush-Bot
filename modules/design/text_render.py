@@ -109,15 +109,74 @@ def wrap_text(text: str, font_path: str, size: int, max_w: int, is_english: bool
     return lines or [""]
 
 
+# تر لومړي ځایېدونکي سایز څو پوائنټه ښکته وګورو چې تر ټولو لږ تشه ومومو.
+# ډیر مه ښکته کوه — کوچنی فونټ پخپله یو نقص دی.
+_RAGGED_SHRINK = 10
+
+
+def raggedness(lines: list[str], font_path: str, size: int, box_w: int,
+               is_english: bool) -> float:
+    """د نا-وروستیو لاینونو منځنۍ پاتې تشه (۰ = بشپړ ډک) — **د کشیدې مخکې**.
+
+    مربع کاروو نو یوه **لویه** تشه تر څو وړو زیاته جریمه شي.
+    """
+    if len(lines) < 2 or not box_w:
+        return 0.0
+    font = get_font(font_path, size)
+    gaps = [max(0.0, 1.0 - text_width(font, ln, is_english) / box_w) for ln in lines[:-1]]
+    return sum(g * g for g in gaps) / len(gaps)
+
+
+def worst_gap_after_kashida(lines: list[str], font_path: str, size: int,
+                            box_w: int, is_english: bool) -> float:
+    """د کشیدې **وروسته** تر ټولو لویه پاتې تشه (px) — دا هغه څه دي چې سترګه یې ویني.
+
+    ⚠️ ولې د کشیدې مخکینۍ تشه بس نه ده: کشیده یو بشپړ توری دی (~۱۵px)، نو
+    پاتې تشه تقریباً «تشه ÷ د کشیدې پراخي» پاتې برخه ده — یعنې د سایز سره یې
+    اړیکه نامنظمه ده. ځکه سایز باید د **ریښتیني** پاتې تشې پر بنسټ وټاکو، نه
+    د خامې تشې. د justify ورته seed کاروو چې اندازه او رسم یو شان وي.
+    """
+    if is_english or len(lines) < 2:
+        return 0.0
+    from .justify import justify_line
+
+    font = get_font(font_path, size)
+    worst = 0.0
+    for i, line in enumerate(lines[:-1]):
+        filled = justify_line(line, lambda t: text_width(font, t, is_english), box_w, seed=i)
+        worst = max(worst, box_w - text_width(font, filled, is_english))
+    return worst
+
+
 def fit_to_box(text: str, font_path: str, box_w: int, box_h: int, gap: int,
                target: int, floor: int, is_english: bool):
-    """له target پیل، سایز کوچنی کوه ترڅو ټول متن د باکس دننه ځای شي (بې کلیپ)."""
+    """ټول متن د باکس دننه ځای کړه (بې کلیپ) — او **تر ټولو لږ تشه** غوره کړه.
+
+    ⚠️ یوازې «لومړی سایز چې ځای شي» اخیستل کافي نه دي: هغه کیدای شي داسې لاینونه
+    جوړ کړي چې طبیعي توګه ډیر لنډ وي، بیا یې کشیده باید ډیره ډکه کړي —
+    «حمـــــــایت». نو له هغو سایزونو چې ځایېږي، هغه اخلو چې لاینونه یې دمخه
+    ډیر ډک وي؛ په دې سره **کشیدې ته لږ اړتیا** پیدا کیږي (ښکلی ډیزاین).
+    """
+    fitting: list[tuple[int, list[str]]] = []
+    biggest: int | None = None
     for size in range(target, floor - 1, -1):
         lines = wrap_text(text, font_path, size, box_w, is_english)
         lh = line_height(get_font(font_path, size), gap)
         if len(lines) * lh <= box_h:
-            return size, lines
-    return floor, wrap_text(text, font_path, floor, box_w, is_english)
+            if biggest is None:
+                biggest = size          # لومړی (لوی) سایز چې ځایېږي
+            fitting.append((size, lines))
+        if biggest is not None and size <= biggest - _RAGGED_SHRINK:
+            break                        # تر دې ښکته مه ځه — فونټ ډیر کوچنی کیږي
+    if not fitting:
+        return floor, wrap_text(text, font_path, floor, box_w, is_english)
+    # لږه **ریښتینې** پاتې تشه غوره ده؛ که تشې نږدې یو شان وې، لوی سایز غوره دی.
+    return min(
+        fitting,
+        key=lambda sl: (round(worst_gap_after_kashida(sl[1], font_path, sl[0],
+                                                      box_w, is_english)),
+                        target - sl[0]),
+    )
 
 
 def find_best_size(text: str, font_path: str, box: tuple, is_english: bool, dcfg: DesignConfig):

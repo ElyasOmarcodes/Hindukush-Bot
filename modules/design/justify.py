@@ -47,10 +47,20 @@ def _is_ws_or_punct(ch: str) -> bool:
 
 
 def _can_insert_at(s: str, idx: int) -> bool:
-    """آیا د idx (کیڼ توری a) او idx+1 (b) ترمنځ کشیده اضافه کیدلی شي؟ (د جاوا قواعد)."""
+    """آیا د idx (توری a) او idx+1 (b) ترمنځ کشیده اضافه کیدلی شي؟
+
+    ⚠️ یوازې **ریښتیني خطاطي شرطونه** ګورو:
+      • `a` باید کیڼ لور ته ونښلي (نه په NON_CONNECTING_LEFT کې وي)،
+      • `b` باید عربي توری وي (ټول عربي توري ښي لور ته نښلي)،
+      • د «لا» رباط مه ماتوه.
+
+    پخوا مو دا هم غوښتل چې **مخکینی** او **وروستی** توری هم عربي وي — خو هغه
+    د کلمې د پیل/پای نښلونې بندولې. پایله: ځینې لاینونو ته **هیڅ** ځای نه پاتې
+    کېده (نو تشه پاتې کېده)، او ځینو ته یوازې **یو** ځای (نو ټوله اړینه پراخي
+    په همغه یوه ځای کې راټوله کېده — «حمـــــــایت»). دواړه ستونزې همدا وې.
+    """
     n = len(s)
-    # idx باید داسې وي چې before=idx-1 او after=idx+2 دواړه موجود وي.
-    if idx < 1 or idx > n - 3:
+    if idx < 0 or idx > n - 2:
         return False
     a, b = s[idx], s[idx + 1]
     if _is_ws_or_punct(a) or _is_ws_or_punct(b):
@@ -64,16 +74,13 @@ def _can_insert_at(s: str, idx: int) -> bool:
     # د «لا» رباط مه ماتوه — «تلـاش» ناسم دی، «تلاش» سم دی.
     if a == _LAM and b in _ALEF:
         return False
-    before, after = s[idx - 1], s[idx + 2]
-    if not _is_arabic_letter(before) or not _is_arabic_letter(after):
-        return False
-    if _is_latin_or_digit(before) or _is_latin_or_digit(after) or _is_latin_or_digit(a) or _is_latin_or_digit(b):
+    if _is_latin_or_digit(a) or _is_latin_or_digit(b):
         return False
     return True
 
 
 def _slots(s: str) -> list[int]:
-    return [i for i in range(1, len(s) - 1) if _can_insert_at(s, i)]
+    return [i for i in range(len(s) - 1) if _can_insert_at(s, i)]
 
 
 def _build(line: str, counts: dict) -> str:

@@ -1262,3 +1262,75 @@ def test_send_designs_retries_after_flood_control():
 
     assert len(attempts) == 3, f"باید بیا هڅه کړې وای: {attempts}"
     assert sleeps, "باید صبر کړی وای"
+
+
+# ---------- کشیده: هر لاین ځای ولري، خو لږ کشیده ----------
+
+_IMG_TEXT = ("رویداد بدخشان از حمایت مردمی برخوردار نیست و تلاش می‌شود از طریق "
+             "شایعات، ناامنی ایجاد شود")
+
+
+def test_every_rtl_line_has_kashida_slots():
+    """⚠️ regression: «تلاش می‌شود از» هیڅ ځای نه درلود → تشه پاتې کېده.
+
+    لامل: مو غوښتل مخکینی/وروستی توری هم عربي وي، چې د کلمې د پیل/پای نښلونه
+    یې بندوله.
+    """
+    from modules.design.justify import _slots
+    for line in ["تلاش می‌شود از", "حمایت مردمی", "از طریق شایعات،", "نیست و تلاش"]:
+        assert _slots(line), f"هیڅ ځای نشته: {line!r}"
+    # «حمایت مردمی» پخوا یوازې ۱ ځای درلود → ټوله پراخي په یوه ځای کې راټولېده.
+    assert len(_slots("حمایت مردمی")) >= 4
+
+
+def test_kashida_spreads_instead_of_piling_into_one_spot():
+    """کشیده باید وویشل شي — نه دا چې «حمـــــــایت» جوړ کړي."""
+    import re
+    from modules.design.justify import justify_line, TATWEEL
+
+    line = "حمایت مردمی"
+    out = justify_line(line, lambda t: len(t), target_w=len(line) + 8)
+    longest = max((len(m) for m in re.findall(TATWEEL + "+", out)), default=0)
+    assert longest <= 4, f"په یوه ځای کې {longest} کشیدې راټولې شوې"
+    assert out.count(TATWEEL) >= 5, "کشیده باید په څو ځایونو کې وویشل شي"
+
+
+def test_fit_to_box_minimises_gap_left_after_kashida():
+    """سایز باید د **کشیدې وروسته** پاتې تشې پر بنسټ وټاکل شي."""
+    from pathlib import Path as _P
+    from modules.design.layout import QUOTE_TITLE_BOX
+    from modules.design.text_render import (
+        fit_to_box, get_font, line_height, worst_gap_after_kashida, wrap_text,
+    )
+
+    d = load_config("config/settings.json").design
+    fp = str(_P(d.fonts_dir) / d.quote_title_font)
+    bw, bh = QUOTE_TITLE_BOX[2], QUOTE_TITLE_BOX[3]
+    size, lines = fit_to_box(_IMG_TEXT, fp, bw, bh, d.title_line_gap,
+                             d.quote_title_size, d.title_abs_min, False)
+    chosen = worst_gap_after_kashida(lines, fp, size, bw, False)
+
+    # د ډیفالټ (لوی) سایز سره پرتله — نوی انتخاب باید تر هغه ښه یا برابر وي.
+    big = wrap_text(_IMG_TEXT, fp, d.quote_title_size, bw, False)
+    if len(big) * line_height(get_font(fp, d.quote_title_size), d.title_line_gap) <= bh:
+        assert chosen <= worst_gap_after_kashida(big, fp, d.quote_title_size, bw, False)
+    assert chosen / bw < 0.02, f"پاتې تشه {100 * chosen / bw:.1f}٪ ده"
+
+
+def test_no_line_is_left_completely_unjustified():
+    """هیڅ نا-وروستی لاین باید بې کشیدې لویه تشه ونه لري."""
+    from pathlib import Path as _P
+    from modules.design.layout import QUOTE_TITLE_BOX
+    from modules.design.text_render import fit_to_box, get_font, text_width
+    from modules.design.justify import justify_line
+
+    d = load_config("config/settings.json").design
+    fp = str(_P(d.fonts_dir) / d.quote_title_font)
+    bw, bh = QUOTE_TITLE_BOX[2], QUOTE_TITLE_BOX[3]
+    size, lines = fit_to_box(_IMG_TEXT, fp, bw, bh, d.title_line_gap,
+                             d.quote_title_size, d.title_abs_min, False)
+    font = get_font(fp, size)
+    for i, ln in enumerate(lines[:-1]):
+        filled = justify_line(ln, lambda t: text_width(font, t, False), bw, seed=i)
+        gap = bw - text_width(font, filled, False)
+        assert gap / bw < 0.02, f"لاین {i} کې {100 * gap / bw:.1f}٪ تشه پاتې ده"
