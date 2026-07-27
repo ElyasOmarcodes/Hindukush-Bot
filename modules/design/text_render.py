@@ -179,32 +179,90 @@ def fit_to_box(text: str, font_path: str, box_w: int, box_h: int, gap: int,
     )
 
 
+def descending_wrap(text: str, font_path: str, size: int, box_w: int,
+                    is_english: bool) -> list[str]:
+    """داسې wrap چې **هیڅ لاین تر پاسني پراخ نشي** او تشه یې لږه وي.
+
+    ⚠️ ساده (greedy) wrap یوازې دا ګوري چې کلمه ځایېږي که نه — نو کیدای شي دویم
+    لاین تر لومړي **پراخ** شي (زموږ قانون ماتوي). دلته د ټولو ممکنو مات‌ځایونو
+    منځ کې هغه غوره کوو چې لومړی **سرغړونې** (پراخېدل) کمې کړي، بیا تشه.
+
+    DP پر (د لاین پیل، پای) — د عنوان کلمې لږې دي، نو ارزانه ده.
+    """
+    font = get_font(font_path, size)
+    words = text.split()
+    n = len(words)
+    if n < 2:
+        return words or [""]
+    space = text_width(font, " ", is_english)
+    prefix = [0.0]
+    for w in words:
+        prefix.append(prefix[-1] + text_width(font, w, is_english))
+
+    def width(i: int, j: int) -> float:
+        return prefix[j] - prefix[i] + space * (j - i - 1)
+
+    INF = float("inf")
+    # best[(i, j)] = (سرغړونې، تشه) د هغه پریفکس لپاره چې وروستی لاین یې words[i:j]
+    best: dict[tuple[int, int], tuple[float, float]] = {}
+    back: dict[tuple[int, int], tuple[int, int] | None] = {}
+    for j in range(1, n + 1):
+        for i in range(j):
+            w = width(i, j)
+            if w > box_w and i + 1 < j:
+                continue                      # ډیر پراخ (یوه کلمه استثنا ده)
+            ragged = 0.0 if j == n else (1 - min(w, box_w) / box_w) ** 2
+            if i == 0:
+                cand, prev = (0.0, ragged), None
+            else:
+                cand, prev = (INF, INF), None
+                for k in range(i):
+                    if (k, i) not in best:
+                        continue
+                    pv, pr = best[(k, i)]
+                    # سرغړونه: پاسنی لاین تر ښکتني **لنډ** وي.
+                    viol = pv + (1 if width(k, i) < w - 0.5 else 0)
+                    score = (viol, pr + ragged)
+                    if score < cand:
+                        cand, prev = score, (k, i)
+            if cand[0] < INF and (best.get((i, j), (INF, INF)) > cand):
+                best[(i, j)] = cand
+                back[(i, j)] = prev
+
+    ends = [(v, key) for key, v in best.items() if key[1] == n]
+    if not ends:
+        return wrap_text(text, font_path, size, box_w, is_english)
+    _, key = min(ends)
+    out = []
+    while key is not None:
+        out.append(" ".join(words[key[0]:key[1]]))
+        key = back[key]
+    return out[::-1]
+
+
 def find_best_size(text: str, font_path: str, box: tuple, is_english: bool, dcfg: DesignConfig):
     """د نږدې-ډیفالټ رینج [normal_min..normal_max] څخه هغه سایز وټاکه چې د لاینونو
-    ترتیب یې تر ټولو ښه وي (پاسني لاینونه ≥ ښکتني لاینونه، بې یتیم وروستي لاین)،
-    او ډیفالټ سایز ته نږدې وي. که متن تر normal_min هم لوی و، بیا تر abs_min پورې
-    کوچنی کوو ترڅو ټول ځای شي (هیڅکله کلیپ نه کوو).
-
-    Pick, from the near-default range, the size whose line distribution best
-    satisfies "upper lines have >= words than lower lines" (no widow), nearest
-    to the default. Only if nothing in that range fits do we shrink further.
+    ترتیب یې تر ټولو ښه وي (پاسني لاینونه **په عرض** ≥ ښکتني، بې یتیم وروستي
+    لاین)، او ډیفالټ سایز ته نږدې وي. که متن تر normal_min هم لوی و، بیا تر
+    abs_min پورې کوچنی کوو ترڅو ټول ځای شي (هیڅکله کلیپ نه کوو).
     """
     _, _, box_w, box_h = box
     lo, hi, target = dcfg.title_normal_min, dcfg.title_normal_max, dcfg.title_target_size
 
     fitting = []
     for size in range(hi, lo - 1, -1):
-        lines = wrap_text(text, font_path, size, box_w, is_english)
+        lines = descending_wrap(text, font_path, size, box_w, is_english)
         lh = line_height(get_font(font_path, size), dcfg.title_line_gap)
         if len(lines) * lh <= box_h:
             fitting.append((size, lines))
     if fitting:
-        return min(fitting, key=lambda sl: _balance_score(sl[1], sl[0], target))
+        return min(fitting, key=lambda sl: _balance_score(
+            sl[1], sl[0], target, font_path, is_english))
 
     # نږدې-ډیفالټ رینج کې ونه ځایېد → تر abs_min پورې کوچنی کوه (شرینک-ټو-فټ).
     abs_min = min(dcfg.title_abs_min, lo)
     for size in range(lo - 1, abs_min - 1, -1):
-        lines = wrap_text(text, font_path, size, box_w, is_english)
+        lines = descending_wrap(text, font_path, size, box_w, is_english)
         lh = line_height(get_font(font_path, size), dcfg.title_line_gap)
         if len(lines) * lh <= box_h:
             logger.info("عنوان اوږد و — سایز تر %dpx ښکته شو چې ټول ځای شي", size)
@@ -213,15 +271,20 @@ def find_best_size(text: str, font_path: str, box: tuple, is_english: bool, dcfg
     return abs_min, wrap_text(text, font_path, abs_min, box_w, is_english)
 
 
-def _balance_score(lines: list[str], size: int, target: int) -> tuple:
+def _balance_score(lines: list[str], size: int, target: int,
+                   font_path: str, is_english: bool) -> tuple:
     """د لاینونو د ترتیب کیفیت — کوچنی = ښه.
 
-    Prefer: no lower line with more words than an upper line, then no lone-word
-    last line (widow), then a size closest to the default.
+    ⚠️ پخوا مو **کلمې** شمېرلې. خو کلمې مختلف اوږدوالی لري، نو ۷ لنډې کلمې
+    کیدای شي تر ۵ اوږدو **لنډې** وي — کارونکی خو **عرض** ویني، نه شمېر.
+    (بېلګه: «۶۹ تن از منسوبین وزارت دفاع از» = ۷ کلمې = ۸۵۳px، خو
+    «آموزش‌های مسلکی نظامی فارغ شدند» = ۵ کلمې = ۱۰۲۷px → قانون مات.)
+    نو اوس **په پکسل** پرتله کوو.
     """
-    counts = [len(ln.split()) for ln in lines]
-    violations = sum(1 for i in range(len(counts) - 1) if counts[i] < counts[i + 1])
-    widow = 1 if len(counts) >= 2 and counts[-1] == 1 else 0
+    font = get_font(font_path, size)
+    widths = [text_width(font, ln, is_english) for ln in lines]
+    violations = sum(1 for i in range(len(widths) - 1) if widths[i] < widths[i + 1] - 0.5)
+    widow = 1 if len(lines) >= 2 and len(lines[-1].split()) == 1 else 0
     return (violations, widow, abs(size - target))
 
 

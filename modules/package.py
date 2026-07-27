@@ -14,6 +14,9 @@ from pathlib import Path
 from .config import Config
 from .utils import ensure_dirs, timestamp_folder
 
+# د منو د اړیکو د یادولو حد — که کارونکی هیڅکله پکیج بشپړ نکړي.
+_MAX_CHATTER = 40
+
 
 @dataclass
 class BufferItem:
@@ -43,6 +46,11 @@ class BotState:
     media_buffer: dict = field(default_factory=lambda: defaultdict(list))
     media_tasks: dict = field(default_factory=dict)
     processing: bool = False
+    # د منو د اړیکو پیغامونه (کارونکی + رباټ) — د بریالۍ دورې وروسته ړنګیږي.
+    # د پکیج **محتوا** پکې نشته، نو راپورونه او انځور خوندي پاتې کیږي.
+    chatter: list[int] = field(default_factory=list)
+    # د وروستي «منو» پیغام ID — د reset سره **نه** پاکیږي (کیبورډ یې راوړی).
+    menu_msg_id: int | None = None
 
     def reset(self) -> None:
         """د دورې وروسته بشپړ پاکول.  Full reset after a cycle."""
@@ -56,6 +64,10 @@ class BotState:
             task.cancel()
         self.media_tasks.clear()
         self.processing = False
+        # ⚠️ `chatter` دلته **نه** پاکوو — هغه پیغامونه لا په چټ کې دي او باید
+        # د بریالۍ دورې وروسته (په _purge_chatter کې) ړنګ شي. که دلته یې پاک
+        # کړو، د «جوړول → عاجل» ترمنځ reset یې ورکوي او بیا نه ړنګیږي.
+        del self.chatter[:-_MAX_CHATTER]  # یوازې ډیر زاړه وغورځوه
 
     def counts(self) -> tuple[int, int]:
         """(انځورونه, متنونه) شمیر.  Return (image_count, text_count)."""

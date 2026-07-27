@@ -908,14 +908,54 @@ def test_title_sizes_updated():
     assert cfg.design.title_normal_max == 77
 
 
-def test_balance_score_prefers_non_increasing_and_no_widow():
+def test_balance_score_compares_pixel_width_not_word_count():
+    """⚠️ regression: پرتله باید **په پکسل** وي، نه د کلمو په شمېر.
+
+    «۶۹ تن از منسوبین وزارت دفاع از» = ۷ کلمې = ۸۵۳px، خو
+    «آموزش‌های مسلکی نظامی فارغ شدند» = ۵ کلمې = ۱۰۲۷px.
+    د کلمو پر بنسټ «سم» ښکارېده (۷ ≥ ۵)، خو سترګه یې مات ویني.
+    """
+    from pathlib import Path as _P
     from modules.design.text_render import _balance_score
-    # [5,4] (upper fuller) بهتر تر [4,5] (لاندې زیات).
-    assert _balance_score(["a b c d e", "a b c d"], 70, 70) < _balance_score(["a b c d", "a b c d e"], 70, 70)
+
+    d = load_config("config/settings.json").design
+    fp = str(_P(d.fonts_dir) / d.title_font)
+    upper = "۶۹ تن از منسوبین وزارت دفاع از"      # ۷ کلمې، خو لنډ
+    lower = "آموزش‌های مسلکی نظامی فارغ شدند"     # ۵ کلمې، خو پراخ
+
+    bad = _balance_score([upper, lower], 70, 70, fp, False)
+    good = _balance_score([lower, upper], 70, 70, fp, False)
+    assert bad[0] == 1, "پراخ ښکتنی لاین باید سرغړونه وګڼل شي"
+    assert good[0] == 0
+    assert good < bad
+
     # بې-یتیم بهتر تر یتیم وروستي لاین.
-    assert _balance_score(["a b c", "a b"], 70, 70) < _balance_score(["a b c d", "a"], 70, 70)
-    # نږدې-ډیفالټ سایز غوره کیږي کله چې ترتیب مساوي وي.
-    assert _balance_score(["a b", "a"], 70, 70) < _balance_score(["a b", "a"], 64, 70)
+    assert _balance_score(["کابل ښار ته", "هرات ښار"], 70, 70, fp, False)[1] == 0
+    assert _balance_score(["کابل ښار ته", "هرات"], 70, 70, fp, False)[1] == 1
+
+
+def test_news_title_never_has_a_wider_lower_line():
+    """د خبر عنوان: هیڅ ښکتنی لاین باید تر پاسني پراخ نشي (۱۰۰٪)."""
+    from pathlib import Path as _P
+    from modules.design.layout import LANGS
+    from modules.design.text_render import find_best_size, get_font, text_width
+
+    d = load_config("config/settings.json").design
+    fp = str(_P(d.fonts_dir) / d.title_font)
+    box = [lg for lg in LANGS if lg["code"] == "fa"][0]["title_box"]
+    for title in [
+        "۶۹ تن از منسوبین وزارت دفاع از آموزش‌های مسلکی نظامی فارغ شدند",
+        "پنتاگون می‌گوید که در جنگ با ایران ۱۸ عسکر آمریکایی کشته شدند",
+        "نتانیاهو می‌گوید موضع خود را در مورد غزه، لبنان و سوریه تغییر نخواهد داد",
+        "د کابل په ښار کې چاودنه وشوه",
+    ]:
+        size, lines = find_best_size(title, fp, box, False, d)
+        font = get_font(fp, size)
+        w = [text_width(font, ln, False) for ln in lines]
+        for i in range(len(w) - 1):
+            assert w[i] >= w[i + 1] - 0.5, (
+                f"لاین {i + 1} ({w[i + 1]:.0f}px) تر {i} ({w[i]:.0f}px) پراخ دی — {title[:30]}"
+            )
 
 
 def test_output_size_config():
@@ -1334,3 +1374,105 @@ def test_no_line_is_left_completely_unjustified():
         filled = justify_line(ln, lambda t: text_width(font, t, False), bw, seed=i)
         gap = bw - text_width(font, filled, False)
         assert gap / bw < 0.02, f"لاین {i} کې {100 * gap / bw:.1f}٪ تشه پاتې ده"
+
+
+# ---------- د منو د اړیکو پاکول ----------
+
+def test_chatter_survives_reset_so_it_can_be_purged():
+    """⚠️ regression: reset به chatter پاکاوه، نو منو-پیغامونه به بیا نه ړنګېدل."""
+    from modules import commands
+    state = _state()
+    commands._track(state, 101, 201, 103)
+    state.reset()                      # د «جوړول → عاجل» ترمنځ پیښیږي
+    assert state.chatter == [101, 201, 103]
+
+
+def test_reset_does_not_forget_the_menu_message():
+    """د منو پیغام ID باید د reset ژوندی پاتې شي (کیبورډ یې راوړی)."""
+    state = _state()
+    state.menu_msg_id = 555
+    state.reset()
+    assert state.menu_msg_id == 555
+
+
+def test_purge_deletes_menu_chatter_in_one_call_and_keeps_content():
+    """د منو پیغامونه یو کال کې ړنګیږي؛ د پکیج محتوا نه لمس کیږي."""
+    import asyncio
+    from modules import commands
+
+    bulk = []
+
+    class _Bot:
+        async def delete_messages(self, chat_id=None, message_ids=None):
+            bulk.append(list(message_ids))
+
+    class _Ctx:
+        bot = _Bot()
+
+    state = _state()
+    commands._track(state, 101, 201, 103, 202, 112)
+    state.buffer.append(BufferItem(type="text", message_id=110, content="راپور"))
+    asyncio.run(commands._purge_chatter(_Ctx(), 1, state))
+
+    assert len(bulk) == 1, "باید یو bulk کال وي (نه فی-پیغام)"
+    assert bulk[0] == [101, 201, 103, 202, 112]
+    assert 110 not in bulk[0], "د پکیج محتوا باید ونه ړنګیږي"
+    assert state.chatter == []
+
+
+def test_progress_is_deleted_before_files_so_menu_is_not_delayed():
+    """د فایلونو وروسته باید یوازې **یو** کال پاتې شي — نه نو منو ناوخته راځي."""
+    import asyncio
+    from modules.config import load_config as _lc
+    from modules.package import BotState as _BS, BufferItem as _BI
+    from modules import commands
+
+    order = []
+
+    class _M:
+        def __init__(self, i):
+            self.message_id = i
+
+    class _Bot:
+        async def send_message(self, cid, text=None, **k):
+            order.append("send")
+            return _M(9)
+
+        async def edit_message_text(self, **k):
+            order.append("edit")
+            return _M(9)
+
+        async def delete_message(self, **k):
+            order.append("del-progress")
+
+        async def delete_messages(self, **k):
+            order.append("purge")
+
+        async def send_media_group(self, chat_id, media, **kw):
+            order.append("FILES")
+            return []
+
+    class _App:
+        def __init__(self, st):
+            self.bot_data = {"state": st}
+
+    class _Ctx:
+        def __init__(self, st):
+            self.application = _App(st)
+            self.bot = _Bot()
+            self.bot_data = self.application.bot_data
+
+    cfg = _lc("config/settings.json")
+    cfg.packages_dir = "data/pending/_t_purge"
+    cfg.design.progress_min_interval = 0.0
+    st = _BS(config=cfg)
+    st.mode = "urgent"
+    st.buffer = [_BI(type="text", message_id=110, content="د کابل په ښار کې خبر خپور شو")]
+    asyncio.run(commands.run_urgent_pipeline(_Ctx(st), 1))
+
+    after_files = order[order.index("FILES") + 1:]
+    assert after_files.count("send") == 1
+    # تر فایلونو وروسته، منو باید **لومړی** کال وي (نه وروسته له edit/delete).
+    assert after_files[0] == "send", f"منو ځنډېدلې: {after_files}"
+    import shutil
+    shutil.rmtree("data/pending/_t_purge", ignore_errors=True)

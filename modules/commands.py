@@ -132,12 +132,47 @@ async def _restore_menu(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
     که ویلو ته څه وي (لکه د نشتې ژبې خبرتیا)، هماغه پیغام کیبورډ وړي — نو
     یو پیغام بس دی.
     """
+    state = _state(context)
+    old_id = state.menu_msg_id
     try:
-        await context.bot.send_message(
+        m = await context.bot.send_message(
             chat_id, text or MENU_RESET_TEXT, reply_markup=main_keyboard()
         )
+        state.menu_msg_id = m.message_id
     except Exception as err:  # noqa: BLE001 - منو بیا ټاکل حیاتي نه دي
         logger.debug("د منو بیا ټاکل: %s", err)
+        return
+    # زوړ منو پیغام اوس ړنګولی شو — نوی یې دمخه کیبورډ ټاکلی دی.
+    if old_id:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=old_id)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _track(state: BotState, *message_ids) -> None:
+    """د منو د اړیکو پیغام یاد کړه — د بریالۍ دورې وروسته ړنګیږي."""
+    for mid in message_ids:
+        if mid:
+            state.chatter.append(mid)
+
+
+async def _purge_chatter(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
+                         state: BotState) -> None:
+    """د منو ټول اړیکه-پیغامونه ړنګ کړه — د پکیج **محتوا** نه لمس کوي.
+
+    یو `deleteMessages` کال کاروو (نه فی-پیغام)، ځکه د نرخ محدودوونکی هر کال
+    ~۳ ثانیې ځنډوي — ۶ جلا کالونه به ~۱۸ ثانیې نیولې وای.
+    """
+    ids = [m for m in dict.fromkeys(state.chatter) if m]
+    if not ids:
+        return
+    try:
+        await context.bot.delete_messages(chat_id=chat_id, message_ids=ids)
+        logger.info("د منو %d اړیکه-پیغامونه ړنګ شول", len(ids))
+    except Exception as err:  # noqa: BLE001 - ښایي ډیر زاړه وي یا اجازه نه وي
+        logger.debug("د منو پیغامونو ړنګول: %s", err)
+    state.chatter.clear()
 
 
 def _state(context: ContextTypes.DEFAULT_TYPE) -> BotState:
@@ -199,19 +234,24 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """د بوټ کیبورډ بټنو اداره — د دستورونو پر ځای."""
-    text = (update.effective_message.text or "").strip()
+    msg = update.effective_message
+    text = (msg.text or "").strip()
     state = _state(context)
+    _track(state, msg.message_id)          # د کارونکي بټن-پیغام
+
+    async def reply(body: str, **kw):
+        sent = await msg.reply_text(body, **kw)
+        _track(state, sent.message_id)     # د رباټ ځواب
+        return sent
 
     if text == BTN_CREATE:
-        await update.effective_message.reply_text(
-            "یو انتخاب وکړئ:", reply_markup=create_keyboard()
-        )
+        await reply("یو انتخاب وکړئ:", reply_markup=create_keyboard())
     elif text == BTN_NEWS:
         state.reset()
         state.mode = "news"
         state.listening = True
         logger.info("د خبر حالت فعال شو (بټن)")
-        await update.effective_message.reply_text(
+        await reply(
             "📰 د خبر حالت فعال شو — اوس انځور او متنونه ولیږئ، بیا «✅ بشپړول» ووهئ.",
             reply_markup=active_keyboard(),
         )
@@ -220,7 +260,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         state.mode = "urgent"
         state.listening = True
         logger.info("د عاجل حالت فعال شو (بټن)")
-        await update.effective_message.reply_text(
+        await reply(
             "🔴 د عاجل حالت فعال شو — یوازې تر ۳ متني راپورونه ولیږئ (بې انځوره)، بیا «✅ بشپړول» ووهئ.",
             reply_markup=active_keyboard(),
         )
@@ -229,7 +269,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         state.mode = "quote"
         state.listening = True
         logger.info("د نقل قول حالت فعال شو (بټن)")
-        await update.effective_message.reply_text(
+        await reply(
             "💬 د نقل قول حالت فعال شو — د شخص انځور + تر ۳ راپورونه ولیږئ، بیا «✅ بشپړول» ووهئ.",
             reply_markup=active_keyboard(),
         )
@@ -237,9 +277,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         state.reset()
         state.listening = False
         state.mode = "news"
-        await update.effective_message.reply_text(
-            "🏠 اصلي منو", reply_markup=main_keyboard()
-        )
+        await reply("🏠 اصلي منو", reply_markup=main_keyboard())
     elif text == BTN_COMPLETE:
         await cmd_cmp(update, context)
     elif text == BTN_CLEAN:
@@ -484,6 +522,7 @@ async def run_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None
         title="📰 خبر",
     )
     note: str | None = None
+    purge = False
     await prog.start()
     try:
         await prog.step(0)  # پکیج ترلاسه شو
@@ -507,22 +546,30 @@ async def run_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None
             raise RuntimeError("هیڅ انځور جوړ نشو")
 
         await prog.step(7)  # لیږل
-        prog.pause()   # ⚠️ نرخ بودجه فایلونو ته پریږده
+        # ⚠️ ژوندی پیغام **مخکې** له لیږلو ړنګوو: د نرخ محدودوونکی هر کال ~۳
+        # ثانیې ځنډوي، نو تر فایلونو وروسته باید یوازې **یو** کال (منو) پاتې شي —
+        # نه نو منو ناوخته ریسیټ کیږي.
+        prog.pause()
+        await prog.delete()
         await _send_designs(context, chat_id, paths, reply_to)
         logger.info("%d انځورونه ګروپ ته ولیږل شول", len(paths))
         done = [lg["code"] for lg in LANGS if (data.get(lg["title_key"]) or "").strip()]
-        await prog.finish(ok=True, summary=_summary(len(paths), done))
-        await prog.delete()          # بریالی — ژوندی پیغام ړنګ کړه
         note = _missing_note(done)
+        purge = True
     except Exception as err:  # noqa: BLE001
         logger.error("د pipeline خطا: %s", err, exc_info=True)
-        await prog.finish(ok=False, err=str(err))
+        if prog.msg_id is not None:
+            await prog.finish(ok=False, err=str(err))
+        else:  # ژوندی پیغام دمخه ړنګ شوی — خطا په منو-پیغام کې ووایه
+            note = f"❌ ناکام — {err}"
     finally:
         # د دورې وروسته بشپړ reset او بیرته اصلي پاڼې (منو) ته ورګرځي.
         state.reset()
         state.listening = False
         state.mode = "news"
         await _restore_menu(context, chat_id, note)
+        if purge:
+            await _purge_chatter(context, chat_id, state)
 
 
 async def run_urgent_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
@@ -536,6 +583,7 @@ async def run_urgent_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) 
         title="🔴 عاجل خبر",
     )
     note: str | None = None
+    purge = False
     await prog.start()
     try:
         await prog.step(0)
@@ -553,20 +601,25 @@ async def run_urgent_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) 
             raise RuntimeError("هیڅ عاجل انځور جوړ نشو")
 
         await prog.step(5)  # لیږل
-        prog.pause()   # ⚠️ نرخ بودجه فایلونو ته پریږده
+        prog.pause()
+        await prog.delete()
         await _send_designs(context, chat_id, paths, reply_to)
         logger.info("%d عاجل انځورونه ولیږل شول", len(paths))
-        await prog.finish(ok=True, summary=_summary(len(paths), titles.keys()))
-        await prog.delete()          # بریالی — ژوندی پیغام ړنګ کړه
         note = _missing_note(titles.keys())
+        purge = True
     except Exception as err:  # noqa: BLE001
         logger.error("د عاجل pipeline خطا: %s", err, exc_info=True)
-        await prog.finish(ok=False, err=str(err))
+        if prog.msg_id is not None:
+            await prog.finish(ok=False, err=str(err))
+        else:  # ژوندی پیغام دمخه ړنګ شوی — خطا په منو-پیغام کې ووایه
+            note = f"❌ ناکام — {err}"
     finally:
         state.reset()
         state.listening = False
         state.mode = "news"
         await _restore_menu(context, chat_id, note)
+        if purge:
+            await _purge_chatter(context, chat_id, state)
 
 
 async def _render_quotes(context, quotes: dict, person, pkg_dir: Path, state: BotState, prog: Progress) -> list[Path]:
@@ -597,6 +650,7 @@ async def run_quote_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -
         title="💬 نقل قول",
     )
     note: str | None = None
+    purge = False
     await prog.start()
     try:
         await prog.step(0)
@@ -616,17 +670,22 @@ async def run_quote_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -
             raise RuntimeError("هیڅ نقل قول انځور جوړ نشو")
 
         await prog.step(5)  # لیږل
-        prog.pause()   # ⚠️ نرخ بودجه فایلونو ته پریږده
+        prog.pause()
+        await prog.delete()
         await _send_designs(context, chat_id, paths, reply_to)
         logger.info("%d نقل قول انځورونه ولیږل شول", len(paths))
-        await prog.finish(ok=True, summary=_summary(len(paths), quotes.keys()))
-        await prog.delete()          # بریالی — ژوندی پیغام ړنګ کړه
         note = _missing_note(quotes.keys())
+        purge = True
     except Exception as err:  # noqa: BLE001
         logger.error("د نقل قول pipeline خطا: %s", err, exc_info=True)
-        await prog.finish(ok=False, err=str(err))
+        if prog.msg_id is not None:
+            await prog.finish(ok=False, err=str(err))
+        else:  # ژوندی پیغام دمخه ړنګ شوی — خطا په منو-پیغام کې ووایه
+            note = f"❌ ناکام — {err}"
     finally:
         state.reset()
         state.listening = False
         state.mode = "news"
         await _restore_menu(context, chat_id, note)
+        if purge:
+            await _purge_chatter(context, chat_id, state)
