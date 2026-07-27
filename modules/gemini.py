@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import datetime, timedelta, timezone
 from itertools import permutations
 
 from .config import Config
@@ -266,6 +267,149 @@ def _is_quota(err: Exception) -> bool:
     ))
 
 
+# ─────────────── د کوټې حافظه (کولډاون) ───────────────
+# ⚠️ ستونزه: کله چې د یوه مډل ورځنۍ کوټه ختمه شي، هره نوې غوښتنه یې بیا له سره
+# ازمویله — هر (مډل، کیلي) جوړه څو ثانیې ضایع کولې. اوس یې په حافظه کې ساتو
+# او تر بیا-تازه کیدو پورې یې پرېږدو.
+#
+# Google د وړیا کچې ورځنۍ کوټه **د America/Los_Angeles په نیمه شپه** بیا تازه
+# کوي. ZoneInfo کاروو (نه ثابت offset) نو د اوړي/ژمي (DST) بدلون پخپله سم شي.
+_QUOTA_TZ = "America/Los_Angeles"
+
+# د «ورځنۍ» کوټې نښه د Google د خطا په quotaId کې (لکه
+# "GenerateRequestsPerDayPerProjectPerModel-FreeTier").
+_DAILY_MARKERS = ("perday", "per_day", "requests_per_day")
+_RETRY_DELAY_RE = re.compile(r"retrydelay['\"]?\s*:\s*['\"]?(\d+(?:\.\d+)?)\s*s", re.I)
+# د لنډې (فی-دقیقې / بار زیاتوالی) ستونزې ډیفالټ کولډاون.
+_DEFAULT_SHORT_COOLDOWN = 60.0
+_OVERLOAD_COOLDOWN = 20.0
+
+
+def _now_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def quota_timezone():
+    """د کوټې د بیا-تازه کیدو وخت-سیمه — ZoneInfo، یا fallback."""
+    try:
+        from zoneinfo import ZoneInfo
+
+        return ZoneInfo(_QUOTA_TZ)
+    except Exception:  # noqa: BLE001 - tzdata نشته
+        logger.warning("د «%s» وخت-سیمه ونه موندل شوه — ثابت UTC-08:00 کارول کیږي",
+                       _QUOTA_TZ)
+        return timezone(timedelta(hours=-8))
+
+
+def next_quota_reset(now: datetime | None = None) -> datetime:
+    """راتلونکې نیمه شپه (۰۰:۰۰) د America/Los_Angeles په وخت — د UTC په بڼه."""
+    tz = quota_timezone()
+    local = (now or _now_utc()).astimezone(tz)
+    tomorrow = (local + timedelta(days=1)).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    return tomorrow.astimezone(timezone.utc)
+
+
+def _is_daily_quota(err: Exception) -> bool:
+    """آیا دا د **ورځنۍ** کوټې ختمېدل دي (نه فی-دقیقې لیمیټ)؟"""
+    s = str(err).lower().replace(" ", "")
+    return any(m in s for m in _DAILY_MARKERS)
+
+
+def _is_overload(err: Exception) -> bool:
+    """۵۰۳ / بار زیاتوالی — لنډمهاله ده، نه کوټه."""
+    s = str(err).upper()
+    return any(t in s for t in ("503", "UNAVAILABLE", "OVERLOAD"))
+
+
+def _retry_delay(err: Exception, default: float = _DEFAULT_SHORT_COOLDOWN) -> float:
+    m = _RETRY_DELAY_RE.search(str(err))
+    return float(m.group(1)) if m else default
+
+
+class QuotaTracker:
+    """د (مډل، کیلي) جوړو کولډاون حافظه — په روان پروسس کې ساتل کیږي.
+
+    Remembers which (model, key) pairs are rate-limited and until when, so the
+    cascade skips them instead of burning seconds on a call that will fail.
+    """
+
+    def __init__(self) -> None:
+        self._until: dict[tuple[str, int], datetime] = {}
+        self._reason: dict[tuple[str, int], str] = {}
+
+    def clear(self) -> None:
+        self._until.clear()
+        self._reason.clear()
+
+    def block_until(self, model: str, key_idx: int, until: datetime, reason: str) -> None:
+        key = (model, key_idx)
+        # تل اوږد کولډاون وساته (ورځنۍ کوټه تر لنډې مهمه ده).
+        if key not in self._until or until > self._until[key]:
+            self._until[key] = until
+            self._reason[key] = reason
+
+    def block_daily(self, model: str, key_idx: int) -> datetime:
+        """تر راتلونکې نیمې شپې (Los Angeles) پورې یې پرېږده."""
+        until = next_quota_reset()
+        self.block_until(model, key_idx, until, "ورځنۍ کوټه")
+        logger.warning(
+            "ورځنۍ کوټه ختمه: %s / کیلي #%d — تر %s (LA نیمه شپه) پورې پرېښودل کیږي",
+            model, key_idx, until.astimezone(quota_timezone()).strftime("%Y-%m-%d %H:%M %Z"),
+        )
+        return until
+
+    def block_seconds(self, model: str, key_idx: int, seconds: float, reason: str) -> None:
+        until = _now_utc() + timedelta(seconds=max(1.0, seconds))
+        self.block_until(model, key_idx, until, reason)
+        logger.info("%s: %s / کیلي #%d — %.0f ثانیې پرېښودل کیږي",
+                    reason, model, key_idx, seconds)
+
+    def blocked_until(self, model: str, key_idx: int) -> datetime | None:
+        until = self._until.get((model, key_idx))
+        if until is None:
+            return None
+        if until <= _now_utc():        # وخت یې تېر شو → بیرته لیست ته راځي
+            self._until.pop((model, key_idx), None)
+            self._reason.pop((model, key_idx), None)
+            logger.info("کوټه بیا تازه شوه: %s / کیلي #%d — بیرته فعال", model, key_idx)
+            return None
+        return until
+
+    def is_blocked(self, model: str, key_idx: int) -> bool:
+        return self.blocked_until(model, key_idx) is not None
+
+    def earliest_unblock(self) -> datetime | None:
+        alive = [u for u in self._until.values() if u > _now_utc()]
+        return min(alive) if alive else None
+
+    def note(self, err: Exception, model: str, key_idx: int) -> None:
+        """د خطا پر بنسټ سم کولډاون ورکړه."""
+        if _is_daily_quota(err):
+            self.block_daily(model, key_idx)
+        elif _is_overload(err):
+            self.block_seconds(model, key_idx, _retry_delay(err, _OVERLOAD_COOLDOWN),
+                               "بار زیاتوالی")
+        elif _is_quota(err):
+            self.block_seconds(model, key_idx, _retry_delay(err), "لنډ لیمیټ")
+
+    def status(self) -> list[str]:
+        """د بندو جوړو لنډ لیست (د /status لپاره)."""
+        tz = quota_timezone()
+        out = []
+        for (model, key_idx), until in sorted(self._until.items(), key=lambda kv: kv[1]):
+            if until <= _now_utc():
+                continue
+            out.append(f"{model} / کیلي #{key_idx} → {until.astimezone(tz):%H:%M} LA "
+                       f"({self._reason.get((model, key_idx), '')})")
+        return out
+
+
+# د پروسس په اوږدو کې یوه ګډه حافظه.
+quota = QuotaTracker()
+
+
 def _clean_source(raw: str) -> str:
     """د سرچینې د پرامپټ ځواب پاک کړه — لومړۍ کرښه، د quotes/Output: پرته."""
     s = (raw or "").strip()
@@ -291,9 +435,17 @@ async def _cascade(prompt: str, config: Config) -> str:
 
     clients = [(i + 1, genai.Client(api_key=k)) for i, k in enumerate(config.gemini_api_keys)]
     last_error: Exception | None = None
+    tried = 0
+    skipped = 0
 
     for model in config.gemini_models:
         for key_idx, client in clients:
+            # ⚠️ که دې جوړې دمخه کوټه/لیمیټ ورکړی و، بیخي یې مه ازموه —
+            # همدا هغه ځای و چې هره غوښتنه یې څو ثانیې ضایع کولې.
+            if quota.is_blocked(model, key_idx):
+                skipped += 1
+                continue
+            tried += 1
             try:
                 resp = await client.aio.models.generate_content(model=model, contents=prompt)
                 if resp.text and resp.text.strip():
@@ -302,10 +454,22 @@ async def _cascade(prompt: str, config: Config) -> str:
                 raise RuntimeError("خالي ځواب")
             except Exception as err:  # noqa: BLE001 - cascade په قصد پراخ دی
                 last_error = err
+                quota.note(err, model, key_idx)   # کولډاون یې یاد وساته
                 reason = "کوټه/لیمیټ" if _is_quota(err) else "خطا"
                 logger.warning("Gemini %s (%s / کیلي #%d): %s — بل ته ځم", reason, model, key_idx, err)
                 continue
 
+    if skipped:
+        logger.info("د کوټې حافظې %d (مډل/کیلي) جوړې پرېښودې — %d وازمویل شوې",
+                    skipped, tried)
+    if tried == 0:
+        nxt = quota.earliest_unblock()
+        when = (nxt.astimezone(quota_timezone()).strftime("%H:%M (%Z)")
+                if nxt else "نامعلوم")
+        raise RuntimeError(
+            "ټولو مډلونو/کیلیانو کوټه ختمه ده. راتلونکې هڅه: " + when +
+            " — د Google وړیا کچه د لاس‌انجلس په نیمه شپه بیا تازه کیږي."
+        )
     raise RuntimeError(f"ټول مډلونه/کیلیانې ناکام شول: {last_error}")
 
 

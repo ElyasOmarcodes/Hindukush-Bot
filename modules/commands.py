@@ -294,8 +294,17 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     state = _state(context)
     imgs, txts = state.counts()
     mode = "فعال 👂" if state.listening else "غیر فعال 🔇"
+    # د کوټې کولډاون — کوم مډل/کیلي اوس پرېښودل کیږي او تر کله.
+    blocked = gemini.quota.status()
+    quota_line = ""
+    if blocked:
+        quota_line = "\n\n🚦 د کوټې کولډاون:\n" + "\n".join(f"• {b}" for b in blocked[:6])
+        if len(blocked) > 6:
+            quota_line += f"\n• … او {len(blocked) - 6} نور"
     if not state.buffer:
-        await update.effective_message.reply_text(f"🎧 حالت: {mode}\n📭 بفر خالي دی.")
+        await update.effective_message.reply_text(
+            f"🎧 حالت: {mode}\n📭 بفر خالي دی.{quota_line}"
+        )
         return
     lines = [f"🎧 حالت: {mode}",
              f"📦 اوسنی بفر — {len(state.buffer)}/{state.config.max_items} توکي",
@@ -308,7 +317,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             lines.append(f"{i}. 🖼 (انځور)")
     if state.processing:
         lines.append("\n⏳ پروسس روان دی…")
-    await update.effective_message.reply_text("\n".join(lines))
+    await update.effective_message.reply_text("\n".join(lines) + quota_line)
 
 
 async def cmd_clean(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

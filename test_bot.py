@@ -1019,3 +1019,143 @@ def test_render_all_produces_three_images(tmp_path):
     for p in paths:
         assert p.exists()
         assert Image.open(p).size == (1920, 1920)  # output_size
+
+
+# ---------- د کوټې کولډاون (Gemini) ----------
+
+_DAILY_ERR = (
+    "429 RESOURCE_EXHAUSTED {'error': {'code': 429, 'status': 'RESOURCE_EXHAUSTED',"
+    " 'details': [{'@type': 'type.googleapis.com/google.rpc.QuotaFailure', 'violations':"
+    " [{'quotaId': 'GenerateRequestsPerDayPerProjectPerModel-FreeTier', 'quotaValue': '20'}]},"
+    " {'@type': 'type.googleapis.com/google.rpc.RetryInfo', 'retryDelay': '52s'}]}}"
+)
+_MINUTE_ERR = "429 RESOURCE_EXHAUSTED quotaId: 'GenerateRequestsPerMinute...', 'retryDelay': '13s'"
+_OVERLOAD_ERR = "503 UNAVAILABLE The model is overloaded."
+
+
+def test_quota_classifies_daily_vs_short():
+    assert gemini._is_daily_quota(RuntimeError(_DAILY_ERR)) is True
+    assert gemini._is_daily_quota(RuntimeError(_MINUTE_ERR)) is False
+    assert gemini._is_overload(RuntimeError(_OVERLOAD_ERR)) is True
+    assert gemini._retry_delay(RuntimeError(_MINUTE_ERR)) == 13.0
+    assert gemini._retry_delay(RuntimeError("no delay here"), 42.0) == 42.0
+
+
+def test_quota_reset_is_la_midnight_and_dst_aware():
+    """ریسیټ د America/Los_Angeles نیمه شپه ده — DST پخپله سم کیږي."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    la = ZoneInfo("America/Los_Angeles")
+
+    summer = gemini.next_quota_reset(datetime(2026, 7, 26, 20, 0, tzinfo=la))
+    winter = gemini.next_quota_reset(datetime(2026, 1, 15, 20, 0, tzinfo=la))
+    # دواړه په LA کې ۰۰:۰۰ دي…
+    assert summer.astimezone(la).hour == 0 and summer.astimezone(la).minute == 0
+    assert winter.astimezone(la).hour == 0
+    # …خو د UTC یې توپیر لري (PDT=UTC-7، PST=UTC-8) — یعنې ثابت offset نه دی.
+    assert summer.hour == 7 and winter.hour == 8
+
+
+def test_daily_quota_blocks_until_reset_then_frees():
+    from datetime import timedelta
+    q = gemini.QuotaTracker()
+    q.note(RuntimeError(_DAILY_ERR), "gemini-3.5-flash", 1)
+    assert q.is_blocked("gemini-3.5-flash", 1)
+    assert not q.is_blocked("gemini-3.5-flash", 2)      # بله کیلي خلاصه
+    assert not q.is_blocked("gemini-3.1-pro-preview", 1)  # بل مډل خلاص
+    assert q.blocked_until("gemini-3.5-flash", 1) == gemini.next_quota_reset()
+
+    # وخت چې تېر شي → پخپله بیرته لیست ته راځي.
+    q._until[("gemini-3.5-flash", 1)] = gemini._now_utc() - timedelta(seconds=1)
+    assert not q.is_blocked("gemini-3.5-flash", 1)
+
+
+def test_short_limit_uses_retry_delay_not_whole_day():
+    q = gemini.QuotaTracker()
+    q.note(RuntimeError(_MINUTE_ERR), "m", 1)
+    until = q.blocked_until("m", 1)
+    assert until is not None
+    secs = (until - gemini._now_utc()).total_seconds()
+    assert 10 < secs < 20, "فی-دقیقې لیمیټ باید ټوله ورځ ونه بندوي"
+
+
+def _fake_genai(calls, fail_with=None):
+    """د google.genai بدیل — هر کال ثبتوي."""
+    import sys, types
+
+    class _Resp:
+        text = "OK"
+
+    class _Models:
+        def __init__(self, key):
+            self.key = key
+
+        async def generate_content(self, model=None, contents=None):
+            calls.append((model, self.key))
+            if fail_with and fail_with(model, self.key):
+                raise RuntimeError(_DAILY_ERR)
+            return _Resp()
+
+    class _Aio:
+        def __init__(self, key):
+            self.models = _Models(key)
+
+    class _Client:
+        def __init__(self, api_key=None):
+            self.aio = _Aio(api_key)
+
+    mod = types.ModuleType("google.genai")
+    mod.Client = _Client
+    pkg = types.ModuleType("google")
+    pkg.genai = mod
+    sys.modules["google"] = pkg
+    sys.modules["google.genai"] = mod
+
+
+def test_cascade_skips_pairs_already_known_to_be_rate_limited():
+    """⚠️ اصلي موخه: بندې جوړې بیخي نه ازمویل کیږي — وخت نه ضایع کیږي."""
+    import asyncio
+    from modules.config import Config
+
+    cfg = Config(gemini_api_keys=["k1", "k2"])
+    cfg.models = ["m1", "m2"]
+
+    # لومړی ځل: m1 دواړه کیلیانې ورځنۍ کوټه ورکوي، m2 بریالی.
+    calls = []
+    _fake_genai(calls, fail_with=lambda model, key: model == "m1")
+    gemini.quota.clear()
+    try:
+        assert asyncio.run(gemini._cascade("p", cfg)) == "OK"
+        assert calls == [("m1", "k1"), ("m1", "k2"), ("m2", "k1")]
+
+        # دویم ځل: m1 باید **بیخي ونه ازمویل شي**.
+        calls.clear()
+        assert asyncio.run(gemini._cascade("p", cfg)) == "OK"
+        assert calls == [("m2", "k1")], f"m1 بیا ازمویل شو: {calls}"
+    finally:
+        gemini.quota.clear()
+
+
+def test_cascade_reports_next_reset_when_everything_is_blocked():
+    """که هرڅه بند وي، سمدلاسه څرګنده خطا — نه دا چې بیا ټول وازمویي."""
+    import asyncio
+    from modules.config import Config
+
+    cfg = Config(gemini_api_keys=["k1"])
+    cfg.models = ["m1"]
+    calls = []
+    _fake_genai(calls, fail_with=lambda model, key: True)
+    gemini.quota.clear()
+    try:
+        asyncio.run(gemini._cascade("p", cfg))
+    except RuntimeError:
+        pass
+    calls.clear()
+    try:
+        asyncio.run(gemini._cascade("p", cfg))
+        raise AssertionError("باید خطا راکړې وای")
+    except RuntimeError as err:
+        assert "کوټه ختمه" in str(err)
+        assert calls == [], "هیڅ کال نه دی پکار — ټول بند دي"
+    finally:
+        gemini.quota.clear()
