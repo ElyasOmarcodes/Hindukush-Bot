@@ -1476,3 +1476,60 @@ def test_progress_is_deleted_before_files_so_menu_is_not_delayed():
     assert after_files[0] == "send", f"منو ځنډېدلې: {after_files}"
     import shutil
     shutil.rmtree("data/pending/_t_purge", ignore_errors=True)
+
+
+# ---------- د Gemini د کال وخت-حد ----------
+
+def test_slow_gemini_call_times_out_and_moves_on():
+    """⚠️ regression: یو کال ۳۸ ثانیې ونیوې او ټول پایپ‌لاین یې بند کړ.
+
+    په لاګ کې: gemini-3.5-flash ۳۸s ونیوې، حال دا چې gemini-3.6-flash
+    ۲.۵s کې ځواب ورکړ. اوس وخت-حد ورو مډل پریږدي.
+    """
+    import asyncio, sys, time, types
+    from modules.config import Config
+
+    class _R:
+        text = "OK"
+
+    class _Models:
+        async def generate_content(self, model=None, contents=None):
+            if model == "m-slow":
+                await asyncio.sleep(30)
+            await asyncio.sleep(0.05)
+            return _R()
+
+    class _Aio:
+        models = _Models()
+
+    class _Client:
+        def __init__(self, api_key=None):
+            self.aio = _Aio()
+
+    mod = types.ModuleType("google.genai"); mod.Client = _Client
+    pkg = types.ModuleType("google"); pkg.genai = mod
+    sys.modules["google"] = pkg
+    sys.modules["google.genai"] = mod
+
+    cfg = Config(gemini_api_keys=["k1"])
+    cfg.models = ["m-slow", "m-fast"]
+    cfg.gemini_timeout = 0.5
+    gemini.quota.clear()
+    try:
+        t0 = time.monotonic()
+        assert asyncio.run(gemini._cascade("p", cfg)) == "OK"
+        elapsed = time.monotonic() - t0
+        assert elapsed < 2.0, f"وخت-حد کار ونکړ ({elapsed:.1f}s)"
+        # ورو جوړه باید لنډ وخت کولډاون واخلي.
+        assert gemini.quota.is_blocked("m-slow", 1)
+        assert not gemini.quota.is_blocked("m-fast", 1)
+    finally:
+        gemini.quota.clear()
+
+
+def test_gemini_timeout_is_configurable():
+    cfg = load_config("config/settings.json")
+    assert cfg.gemini_timeout == 20.0
+    import json as _j
+    raw = _j.loads(Path("config/settings.json").read_text(encoding="utf-8"))
+    assert raw["gemini"]["timeout"] == 20.0

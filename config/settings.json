@@ -10,6 +10,8 @@
   },
   "gemini": {
     "api_keys": [],
+    "_comment_timeout": "د یوه کال اعظمي وخت (ثانیې) — ورو مډل پریږدو",
+    "timeout": 20.0,
     "models": [
       "gemini-3.5-flash",
       "gemini-3.6-flash",

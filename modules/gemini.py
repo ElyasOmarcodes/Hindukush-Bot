@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from itertools import permutations
 
@@ -284,6 +285,8 @@ _RETRY_DELAY_RE = re.compile(r"retrydelay['\"]?\s*:\s*['\"]?(\d+(?:\.\d+)?)\s*s"
 # د لنډې (فی-دقیقې / بار زیاتوالی) ستونزې ډیفالټ کولډاون.
 _DEFAULT_SHORT_COOLDOWN = 60.0
 _OVERLOAD_COOLDOWN = 20.0
+# ورو (timeout) جوړه — لنډ یې پریږدو، ښایي بیا ژر شي.
+_SLOW_COOLDOWN = 45.0
 
 
 def _now_utc() -> datetime:
@@ -435,6 +438,7 @@ async def _cascade(prompt: str, config: Config) -> str:
     from google import genai
 
     clients = [(i + 1, genai.Client(api_key=k)) for i, k in enumerate(config.gemini_api_keys)]
+    timeout = float(getattr(config, "gemini_timeout", 20.0) or 20.0)
     last_error: Exception | None = None
     tried = 0
     skipped = 0
@@ -447,12 +451,25 @@ async def _cascade(prompt: str, config: Config) -> str:
                 skipped += 1
                 continue
             tried += 1
+            started = time.monotonic()
             try:
-                resp = await client.aio.models.generate_content(model=model, contents=prompt)
+                # ⚠️ وخت-حد حتمي دی — پرته له دې یو ورو ځواب ټوله دوره بندوي.
+                resp = await asyncio.wait_for(
+                    client.aio.models.generate_content(model=model, contents=prompt),
+                    timeout=timeout,
+                )
                 if resp.text and resp.text.strip():
-                    logger.info("Gemini بریالی: %s / کیلي #%d", model, key_idx)
+                    logger.info("Gemini بریالی: %s / کیلي #%d (%.1fs)",
+                                model, key_idx, time.monotonic() - started)
                     return resp.text
                 raise RuntimeError("خالي ځواب")
+            except (asyncio.TimeoutError, TimeoutError) as err:
+                last_error = err
+                # ورو جوړه لنډ وخت پریږده — بل مډل ښایي سمدلاسه ځواب ورکړي.
+                quota.block_seconds(model, key_idx, _SLOW_COOLDOWN, "ورو ځواب")
+                logger.warning("Gemini ورو و (%s / کیلي #%d): تر %.0fs زیات — بل ته ځم",
+                               model, key_idx, timeout)
+                continue
             except Exception as err:  # noqa: BLE001 - cascade په قصد پراخ دی
                 last_error = err
                 quota.note(err, model, key_idx)   # کولډاون یې یاد وساته
