@@ -423,10 +423,37 @@ class QuotaTracker:
     def __init__(self) -> None:
         self._until: dict[tuple[str, int], datetime] = {}
         self._reason: dict[tuple[str, int], str] = {}
+        # ⚠️ **د مډل کچې** بندښت — ځینې ستونزې د کیلي نه دي، د مډل دي:
+        # «This model is currently experiencing high demand» (503). په دې حالت
+        # کې نورې کیلۍ ازمویل بې‌ګټې دي — په لاګ کې یې ۴۰ ثانیې ضایع کړې.
+        self._model_until: dict[str, datetime] = {}
+        self._model_reason: dict[str, str] = {}
 
     def clear(self) -> None:
         self._until.clear()
         self._reason.clear()
+        self._model_until.clear()
+        self._model_reason.clear()
+
+    def block_model(self, model: str, seconds: float, reason: str) -> None:
+        """ټول مډل (ټولې کیلۍ) لنډ وخت پریږده."""
+        until = _now_utc() + timedelta(seconds=max(1.0, seconds))
+        if model not in self._model_until or until > self._model_until[model]:
+            self._model_until[model] = until
+            self._model_reason[model] = reason
+            logger.info("%s: **%s** (ټولې کیلۍ) — %.0f ثانیې پرېښودل کیږي",
+                        reason, model, seconds)
+
+    def model_blocked_until(self, model: str) -> datetime | None:
+        until = self._model_until.get(model)
+        if until is None:
+            return None
+        if until <= _now_utc():
+            self._model_until.pop(model, None)
+            self._model_reason.pop(model, None)
+            logger.info("مډل بیرته فعال: %s", model)
+            return None
+        return until
 
     def block_until(self, model: str, key_idx: int, until: datetime, reason: str) -> None:
         key = (model, key_idx)
@@ -452,6 +479,9 @@ class QuotaTracker:
                     reason, model, key_idx, seconds)
 
     def blocked_until(self, model: str, key_idx: int) -> datetime | None:
+        model_block = self.model_blocked_until(model)
+        if model_block is not None:
+            return model_block
         until = self._until.get((model, key_idx))
         if until is None:
             return None
@@ -466,16 +496,19 @@ class QuotaTracker:
         return self.blocked_until(model, key_idx) is not None
 
     def earliest_unblock(self) -> datetime | None:
-        alive = [u for u in self._until.values() if u > _now_utc()]
+        now = _now_utc()
+        alive = [u for u in list(self._until.values()) + list(self._model_until.values())
+                 if u > now]
         return min(alive) if alive else None
 
     def note(self, err: Exception, model: str, key_idx: int) -> None:
         """د خطا پر بنسټ سم کولډاون ورکړه."""
         if _is_daily_quota(err):
-            self.block_daily(model, key_idx)
+            self.block_daily(model, key_idx)   # کوټه فی (مډل، کیلي) ده
         elif _is_overload(err):
-            self.block_seconds(model, key_idx, _retry_delay(err, _OVERLOAD_COOLDOWN),
-                               "بار زیاتوالی")
+            # ⚠️ «This model is experiencing high demand» = د **مډل** ستونزه،
+            # نه د کیلي. نورې کیلۍ ازمویل یوازې وخت خوري.
+            self.block_model(model, _retry_delay(err, _OVERLOAD_COOLDOWN), "بار زیاتوالی")
         elif _is_quota(err):
             self.block_seconds(model, key_idx, _retry_delay(err), "لنډ لیمیټ")
 
@@ -483,6 +516,10 @@ class QuotaTracker:
         """د بندو جوړو لنډ لیست (د /status لپاره)."""
         tz = quota_timezone()
         out = []
+        for model, until in sorted(self._model_until.items(), key=lambda kv: kv[1]):
+            if until > _now_utc():
+                out.append(f"{model} (ټول مډل) → {until.astimezone(tz):%H:%M} LA "
+                           f"({self._model_reason.get(model, '')})")
         for (model, key_idx), until in sorted(self._until.items(), key=lambda kv: kv[1]):
             if until <= _now_utc():
                 continue
@@ -523,6 +560,7 @@ async def _cascade(prompt: str, config: Config) -> str:
     last_error: Exception | None = None
     tried = 0
     skipped = 0
+    slow: dict[str, int] = {}
 
     for model in config.gemini_models:
         for key_idx, client in clients:
@@ -546,10 +584,14 @@ async def _cascade(prompt: str, config: Config) -> str:
                 raise RuntimeError("خالي ځواب")
             except (asyncio.TimeoutError, TimeoutError) as err:
                 last_error = err
-                # ورو جوړه لنډ وخت پریږده — بل مډل ښایي سمدلاسه ځواب ورکړي.
                 quota.block_seconds(model, key_idx, _SLOW_COOLDOWN, "ورو ځواب")
+                slow[model] = slow.get(model, 0) + 1
                 logger.warning("Gemini ورو و (%s / کیلي #%d): تر %.0fs زیات — بل ته ځم",
                                model, key_idx, timeout)
+                # دوه کیلۍ چې ورو شوې → ستونزه د مډل ده، نه د کیلي.
+                if slow[model] >= 2:
+                    quota.block_model(model, _SLOW_COOLDOWN, "ورو مډل")
+                    break
                 continue
             except Exception as err:  # noqa: BLE001 - cascade په قصد پراخ دی
                 last_error = err

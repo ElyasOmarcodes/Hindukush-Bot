@@ -1590,3 +1590,106 @@ def test_gemini_timeout_is_configurable():
     import json as _j
     raw = _j.loads(Path("config/settings.json").read_text(encoding="utf-8"))
     assert raw["gemini"]["timeout"] == 20.0
+
+
+# ---------- د مډل کچې کولډاون ----------
+
+_OVERLOAD_ERR_FULL = (
+    "503 UNAVAILABLE. {'error': {'code': 503, 'message': 'This model is currently "
+    "experiencing high demand. Spikes in demand are usually temporary.', "
+    "'status': 'UNAVAILABLE'}}"
+)
+
+
+def _stub_genai(attempts, behaviour):
+    import sys, types
+
+    class _R:
+        text = "OK"
+
+    class _Models:
+        def __init__(self, key):
+            self.key = key
+
+        async def generate_content(self, model=None, contents=None):
+            attempts.append((model, self.key))
+            await behaviour(model, self.key)
+            return _R()
+
+    class _Aio:
+        def __init__(self, key):
+            self.models = _Models(key)
+
+    class _Client:
+        def __init__(self, api_key=None):
+            self.aio = _Aio(api_key)
+
+    mod = types.ModuleType("google.genai"); mod.Client = _Client
+    pkg = types.ModuleType("google"); pkg.genai = mod
+    sys.modules["google"] = pkg
+    sys.modules["google.genai"] = mod
+
+
+def test_overload_blocks_the_whole_model_not_just_one_key():
+    """⚠️ regression: «This model is experiencing high demand» = د مډل ستونزه.
+
+    په لاګ کې کیلي #۱ 503 ورکړه، بیا مو هماغه مډل له کیلي #۲ او #۳ سره وازموه —
+    هره یوه ۲۰ ثانیې وخت-حد ته ورسېده. ۴۰ ثانیې بې‌ګټې.
+    """
+    import asyncio
+    from modules.config import Config
+
+    attempts = []
+
+    async def behave(model, key):
+        if model == "m1":
+            raise RuntimeError(_OVERLOAD_ERR_FULL)
+
+    _stub_genai(attempts, behave)
+    cfg = Config(gemini_api_keys=["k1", "k2", "k3"])
+    cfg.models = ["m1", "m2"]
+    gemini.quota.clear()
+    try:
+        assert asyncio.run(gemini._cascade("p", cfg)) == "OK"
+        # m1 باید **یوازې یو ځل** وازمویل شي — بیا ټول مډل بند.
+        assert attempts == [("m1", "k1"), ("m2", "k1")], attempts
+        assert gemini.quota.is_blocked("m1", 2), "نورې کیلۍ هم باید بندې وي"
+        assert gemini.quota.is_blocked("m1", 3)
+        assert not gemini.quota.is_blocked("m2", 1)
+    finally:
+        gemini.quota.clear()
+
+
+def test_two_slow_keys_escalate_to_a_model_level_block():
+    """که د یوه مډل دوه کیلۍ ورو شي، ستونزه د مډل ده — دریمه مه ازموه."""
+    import asyncio
+    from modules.config import Config
+
+    attempts = []
+
+    async def behave(model, key):
+        if model == "m1":
+            await asyncio.sleep(5)      # تر وخت-حد زیات
+
+    _stub_genai(attempts, behave)
+    cfg = Config(gemini_api_keys=["k1", "k2", "k3"])
+    cfg.models = ["m1", "m2"]
+    cfg.gemini_timeout = 0.3
+    gemini.quota.clear()
+    try:
+        assert asyncio.run(gemini._cascade("p", cfg)) == "OK"
+        m1_tries = [a for a in attempts if a[0] == "m1"]
+        assert len(m1_tries) == 2, f"دریمه کیلي هم وازمویل شوه: {attempts}"
+        assert gemini.quota.is_blocked("m1", 3)
+    finally:
+        gemini.quota.clear()
+
+
+def test_model_block_appears_in_status_and_expires():
+    from datetime import timedelta
+    q = gemini.QuotaTracker()
+    q.block_model("m1", 20, "بار زیاتوالی")
+    assert q.is_blocked("m1", 1) and q.is_blocked("m1", 7)
+    assert any("ټول مډل" in s for s in q.status())
+    q._model_until["m1"] = gemini._now_utc() - timedelta(seconds=1)
+    assert not q.is_blocked("m1", 1), "وخت چې تېر شي، مډل بیرته فعالیږي"
