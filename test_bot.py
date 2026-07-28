@@ -1203,34 +1203,91 @@ def test_cascade_reports_next_reset_when_everything_is_blocked():
 
 # ---------- د نرخ-حد (flood) ساتنه ----------
 
-def test_sources_are_extracted_in_parallel():
-    """درې سرچینې یوځای راځي — پرله‌پسې یې ~۱۵–۲۵ ثانیې نیوې."""
-    import asyncio, time
+def test_whole_package_needs_exactly_one_gemini_call():
+    """⚠️ یو پکیج = **یو کال**. پخوا ۴ وو (۱ سرلیک/موقعیت + ۳ سرچینې).
+
+    دا هم وخت سپموي او هم د وړیا کوټې څلور برخې.
+    """
+    import asyncio
     from modules.config import Config
 
     calls = []
     orig = gemini._cascade
 
     async def fake(prompt, config):
-        calls.append(prompt[:20])
-        await asyncio.sleep(0.2)
-        if prompt.startswith(gemini.SOURCE_PROMPT[:40]):
-            return "الجزیره"
-        return ('{"text_ps":"پ سرلیک","text_fa":"ف سرتیتر",'
-                '"text_en":"E headline","location":"World"}')
+        calls.append(prompt)
+        return ('{"text_ps":"الجزیره: پ سرلیک","source_ps":"الجزیره",'
+                '"text_fa":"ف سرتیتر","source_fa":"باختر آژانس",'
+                '"text_en":"E headline","source_en":"Reuters",'
+                '"location":"World"}')
 
     gemini._cascade = fake
     try:
-        t0 = time.monotonic()
         res = asyncio.run(gemini.analyze(["پښتو دی", "فارسی است", "English is"],
                                          Config(gemini_api_keys=["k"])))
-        elapsed = time.monotonic() - t0
     finally:
         gemini._cascade = orig
 
-    assert len(calls) == 4                 # ۱ اصلي + ۳ سرچینې
-    assert elapsed < 0.55, f"پرله‌پسې کار کوي ({elapsed:.2f}s) — باید موازي وي"
-    assert res["source_ps"] and res["source_fa"] and res["source_en"]
+    assert len(calls) == 1, f"باید یو کال وي، خو {len(calls)} شول"
+    # ګډ پرامپټ دې درې واړه برخې ولري.
+    assert "source_ps" in calls[0] and "location" in calls[0]
+    assert "GRAMMAR CORRECTION" in calls[0], "د سرچینې قواعد باید شامل وي"
+    # سرچینې د همدې یوه ځواب څخه راځي.
+    assert res["source_ps"] == "الجزیره"
+    assert res["source_fa"] == "باختر آژانس"
+    assert res["source_en"] == "Reuters"
+    # د «:» مخکینۍ برخه لا هم له سرلیک بیلیږي.
+    assert res["title_ps"] == "پ سرلیک"
+
+
+def test_quote_needs_exactly_one_gemini_call():
+    """د نقل قول ټولې ژبې هم په یوه کال کې (پخوا فی ژبه یو کال)."""
+    import asyncio
+    from modules.config import Config
+
+    calls = []
+    orig = gemini._cascade
+
+    async def fake(prompt, config):
+        calls.append(prompt)
+        return ('{"ps":{"name":"احمد","rank":"وزیر","quote":"پښتو نقل قول."},'
+                '"fa":{"name":"احمد","rank":"وزیر","quote":"نقل قول فارسی!"},'
+                '"en":{"name":"Ahmad","rank":"Minister","quote":"English quote."}}')
+
+    gemini._cascade = fake
+    try:
+        out = asyncio.run(gemini.analyze_quote(
+            ["د کابل په ښار کې ویې ویل", "در شهر کابل گفته شد", "Said in Kabul city"],
+            Config(gemini_api_keys=["k"])))
+    finally:
+        gemini._cascade = orig
+
+    assert len(calls) == 1, f"باید یو کال وي، خو {len(calls)} شول"
+    assert set(out) == {"ps", "fa", "en"}
+    # د پای نقطه/تعجب لرې کیږي (زموږ قانون).
+    assert out["ps"]["quote"] == "پښتو نقل قول"
+    assert out["fa"]["quote"] == "نقل قول فارسی"
+    assert out["en"]["quote"] == "English quote"
+    assert out["ps"]["rank"] == "وزیر"
+    # ژبې په کوډ کې ټاکل شوې — پرامپټ یې لیبل شوي وړي.
+    assert "[ps]" in calls[0] and "[fa]" in calls[0] and "[en]" in calls[0]
+
+
+def test_quote_prompt_rules_are_kept_verbatim():
+    """د کاروونکي قواعد باید په ګډ پرامپټ کې کټ مټ پاتې شي."""
+    built = gemini.QUOTE_COMBINED_PROMPT.format(
+        rules=gemini._QUOTE_RULES, reports="[ps] test")
+    for must in ["ZERO CHANGES", "NO TRAILING PUNCTUATION", "VERBATIM", "DEEP SEARCH"]:
+        assert must in built, must
+
+
+def test_source_rules_are_kept_verbatim_in_combined_prompt():
+    """د سرچینې قواعد (د کاروونکي تجربه شوی پرامپټ) باید کټ مټ وي."""
+    built = gemini.build_prompt(["پښتو راپور"])
+    for must in ["GRAMMAR CORRECTION", "نړيوالې رسنۍ", "باختر آژانس",
+                 "ORGANIZATION OVER PERSON", "FALLBACK WHEN NO SOURCE EXISTS",
+                 "قطر کې د افغانستان سفارت"]:
+        assert must in built, must
 
 
 def test_progress_pause_stops_the_ticker_before_sending():

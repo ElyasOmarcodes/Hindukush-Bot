@@ -184,10 +184,91 @@ Input Text:
 """
 
 
+# د کاروونکي د سرچینې قواعد **کټ مټ** (له «--- END OF INSTRUCTIONS ---» پرته)
+# چې په ګډ پرامپټ کې یې بیا وکاروو — یو توری یې هم نه بدلوو.
+_SOURCE_RULES = SOURCE_PROMPT.split("--- END OF INSTRUCTIONS ---")[0].strip()
+
+# ⚠️ **یو کال، یو ځواب.** پخوا مو څلور جلا کالونه کول (۱ سرلیک/موقعیت + ۳
+# سرچینې) — دا هم وخت خوري او هم د وړیا کوټې څلور برخې. اوس ټول یوځای غواړو.
+COMBINED_PROMPT = """تاسو د یوې خبري ادارې مرستیال یاست. لاندې تر دریو راپورونه \
+درکړل شوي دي (کیدای شي پښتو، فارسي او انګلیسي وي).
+
+⚠️ ستا دنده درې برخې لري: (الف) سرلیک، (ب) سرچینه، (ج) موقعیت.
+
+════════ (الف) سرلیک ════════
+1. د هر راپور **یوازې سرلیک = لومړی لاین** راوباسه. سرلیک تر **لومړي line-break** \
+پورې دی؛ که line-break نه وي، نو تر **لومړۍ ټکي (.)** پورې لومړۍ جمله. سرلیک **کټ مټ \
+(VERBATIM)** کاپي کړه — هیڅ بدلون، هیڅ ژباړه.
+2. ⚠️ **خورا مهم:** یوازې سرلیک (لومړی لاین/جمله) راوباسه — **نه** دوهمه جمله، **نه** د \
+بدن (body) پاراګرافونه، **نه** بشپړ راپور. که د سرلیک وروسته نور متن وي، هغه **بشپړ \
+پریږده**. سرلیک معمولاً ۱ یا ۲ لنډې کرښې دي، نه ۴-۵.
+3. که د سرلیک په پیل کې د سرچینې نوم وي (لکه «الجزیره:»)، هغه **د سرلیک دننه پریږده** — \
+زه به یې پخپله بیل کړم؛ خو سرچینه یې جلا هم ولیکه (لاندې برخه ب).
+4. ژبې: هر راپور خپلې ژبې ته وسپاره — `text_ps` = د پښتو راپور سرلیک، `text_fa` = فارسي، \
+`text_en` = انګلیسي. **د هر ورکړل شوي راپور لپاره خپله ساحه حتماً ډکه کړه**.
+5. که کومه ژبه اصلاً نه وي ورکړل شوې، هغه ساحه خالي رشته "" پریږده.
+
+════════ (ب) سرچینه ════════
+د **هر** راپور لپاره سرچینه راوباسه (`source_ps` / `source_fa` / `source_en`) — د هغې \
+ژبې په خپله ژبه. لاندې قواعد **کټ مټ** پلي کړه (دا د بشپړ راپور متن ته ګوري، نه یوازې \
+سرلیک ته):
+
+{source_rules}
+
+════════ (ج) موقعیت ════════
+دا اصول **په ترتیب** سره پلي کړه، یو ارزښت راوباسه:
+1. که خبر کې افغانستان په هره بڼه ښکیل وي (یوازې، یا له بل هیواد سره یوځای)، یا خاص \
+د افغانستان په اړه وي → "Afghanistan".
+2. که نه، او خبر یوازې د افغانستان د پولې ګاونډیو هیوادونو (پاکستان، ایران، تاجیکستان، \
+ازبکستان، ترکمنستان، چین) په اړه وي → "Region". خو که له دې ګاونډیو سره یو غیر-سیمه‌ایز \
+هیواد هم ښکیل وي → "World".
+3. که نه، او خبر یوازې د منځني ختیځ هیوادونو (سعودي، امارات، قطر، کویټ، بحرین، عمان، یمن، \
+عراق، سوریه، لبنان، اردن، فلسطین، اسراییل، مصر، ترکیه) په اړه وي → "Middle East". خو که \
+له منځني ختیځ سره یو بل هیواد (سیمه یا نړۍ) هم ښکیل وي → "World".
+4. که نه → "World".
+
+════════ خروجي ════════
+**یوازې** دا JSON راوګرځوه، پرته له کوم markdown یا تشریح:
+{{
+  "text_ps": "...", "source_ps": "...",
+  "text_fa": "...", "source_fa": "...",
+  "text_en": "...", "source_en": "...",
+  "location": "Middle East"
+}}
+
+راپورونه:
+{reports}
+"""
+
+
+# د کاروونکي د نقل قول قواعد **کټ مټ** (له OUTPUT FORMAT پرته).
+_QUOTE_RULES = QUOTE_PROMPT.split("OUTPUT FORMAT:")[0].strip()
+
+# ⚠️ یو کال د ټولو ژبو لپاره (پخوا فی ژبه یو کال = تر ۳ کالونو).
+# ژبې مو **په کوډ کې** ټاکلې دي (map_reports)، نو دلته یې یوازې لیبل ورکوو —
+# د Gemini پر ژب-پیژندنې تکیه نه کوو.
+QUOTE_COMBINED_PROMPT = """Role: Expert Linguistic Analyst and Media Monitor.
+Task: For EACH labelled report below, extract its entities.
+
+{rules}
+
+OUTPUT FORMAT: Return raw JSON only, keyed by the language code shown in each
+label. Include ONLY the languages that appear below. NO Markdown.
+{{
+  "ps": {{ "name": "...", "rank": "...", "quote": "..." }},
+  "fa": {{ "name": "...", "rank": "...", "quote": "..." }},
+  "en": {{ "name": "...", "rank": "...", "quote": "..." }}
+}}
+
+Reports:
+{reports}
+"""
+
+
 def build_prompt(texts: list[str]) -> str:
     """د راپورونو لیست د تحلیل پرامپټ ته واړوه.  Build the analysis prompt."""
     numbered = "\n\n".join(f"[راپور {i}]\n{t}" for i, t in enumerate(texts, 1))
-    return PROMPT_TEMPLATE.format(reports=numbered)
+    return COMBINED_PROMPT.format(source_rules=_SOURCE_RULES, reports=numbered)
 
 
 def extract_json(text: str) -> dict:
@@ -507,6 +588,9 @@ _PERSIAN_LETTERS = set("گ")
 # (زوړ نوم — لا هم د شاته-سمون لپاره ساتل شوی)
 _PASHTO_MARKERS = "ښږڅځډړټڼ"
 
+# د پرامپټ لپاره د ژبو نومونه.
+LANG_LABELS = {"ps": "Pashto", "fa": "Persian", "en": "English"}
+
 # د دواړو ژبو عام او **نه-شریک** کلمې. شریکې کلمې (هم، نه، باید، پر…) قصداً نشته.
 _PASHTO_WORDS = {
     "د", "په", "کې", "دی", "ده", "دي", "دې", "چې", "لپاره", "شوی", "شوې", "شول",
@@ -667,6 +751,9 @@ async def _main_extract(reports: list[str], config: Config) -> dict:
         for lg in ("ps", "fa", "en"):
             if not (raw.get(f"text_{lg}") or "").strip() and (parsed.get(f"text_{lg}") or "").strip():
                 raw[f"text_{lg}"] = parsed[f"text_{lg}"]
+            # سرچینه اوس د همدې ګډ کال برخه ده — هغه هم یوځای کړه.
+            if not (raw.get(f"source_{lg}") or "").strip() and (parsed.get(f"source_{lg}") or "").strip():
+                raw[f"source_{lg}"] = parsed[f"source_{lg}"]
         if not raw.get("location") and (parsed.get("location") or "").strip():
             raw["location"] = parsed["location"]
         got = sum(1 for lg in ("ps", "fa", "en") if (raw.get(f"text_{lg}") or "").strip())
@@ -718,21 +805,51 @@ async def extract_quote(text: str, config: Config) -> dict:
 
 
 async def analyze_quote(texts: list[str], config: Config) -> dict:
-    """د نقل قول لپاره — هر راپور (ژبه) څخه {name, rank, quote} راوباسه.
+    """د نقل قول لپاره — د **ټولو** ژبو {name, rank, quote} په **یوه کال** کې.
+
+    ⚠️ پخوا مو فی ژبه یو کال کاوه (تر ۳ کالونو). اوس ژبې په کوډ کې ټاکو
+    (map_reports — چې د لنډو راپورونو لپاره یې ځیرکه کړه) او Gemini ته یې
+    لیبل شوي ورکوو، نو یو ځواب بس دی.
 
     Returns {lang: {name, rank, quote}} for languages whose quote is non-empty.
     """
     if not config.gemini_api_keys:
         raise RuntimeError("د Gemini هیڅ کیلي نه ده تنظیم شوې (GEMINI_API_KEYS).")
-    result: dict = {}
-    for lang, raw in map_reports([t for t in texts if t.strip()]).items():
+    per = map_reports([t for t in texts if t.strip()])
+    if not per:
+        return {}
+
+    labelled = "\n\n".join(
+        f"[{lang}] ({LANG_LABELS[lang]} report)\n{txt}" for lang, txt in per.items()
+    )
+    prompt = QUOTE_COMBINED_PROMPT.format(rules=_QUOTE_RULES, reports=labelled)
+
+    data: dict = {}
+    last_error: Exception | None = None
+    for attempt in range(1, _MAX_MAIN_ATTEMPTS + 1):
         try:
-            data = await extract_quote(raw, config)
-        except Exception as err:  # noqa: BLE001 - یوه ژبه نه باید نور ودروي
-            logger.warning("[%s] د نقل قول استخراج ناکام: %s", lang, err)
+            data = _parse_json(await _cascade(prompt, config))
+            break
+        except Exception as err:  # noqa: BLE001
+            last_error = err
+            logger.warning("د نقل قول کال هڅه %d ناکام: %s", attempt, err)
+    if not data:
+        raise RuntimeError(f"د نقل قول تحلیل ناکام: {last_error}")
+
+    result: dict = {}
+    for lang in per:
+        d = data.get(lang) or {}
+        if not isinstance(d, dict):
             continue
-        if data.get("quote"):
-            result[lang] = data
+        quote = (d.get("quote") or "").strip().rstrip(" .!۔؟。！?").rstrip()
+        if quote:
+            result[lang] = {
+                "name": (d.get("name") or "").strip(),
+                "rank": (d.get("rank") or "").strip(),
+                "quote": quote,
+            }
+        else:
+            logger.warning("[%s] نقل قول تش راغی", lang)
     return result
 
 
@@ -759,12 +876,14 @@ async def extract_titles(texts: list[str], config: Config) -> dict:
 
 
 async def analyze(texts: list[str], config: Config) -> dict:
-    """بشپړ تحلیل — سرلیک (کټ مټ، یوازې د Gemini لومړی پاراګراف) + موقعیت + سرچینه.
+    """بشپړ تحلیل — سرلیک + سرچینه + موقعیت، **په یوه کال کې**.
 
-    Titles come only from Gemini's verbatim first paragraph (with retry so a
-    one-off omission self-heals); a language with no paragraph is simply left
-    out (its image is skipped). Source uses the dedicated prompt with the
-    per-language default. verify_result logs any anomaly before returning.
+    ⚠️ پخوا مو څلور کالونه کول: ۱ (سرلیک/موقعیت) + ۳ (هرې ژبې سرچینه). دا هم
+    وخت خوري او هم د وړیا کوټې څلور برخې. اوس ټول یوه ګډه JSON ده.
+
+    سرچینه په درې پوړیز ترتیب: (۱) د Gemini خپله سرچینه، (۲) د سرلیک د «:»
+    مخکینۍ برخه، (۳) د ژبې ډیفالټ. نو هیڅکله تشه نه پاتې کیږي — او هیڅ اضافي
+    کال نه غواړي.
     """
     if not config.gemini_api_keys:
         raise RuntimeError("د Gemini هیڅ کیلي نه ده تنظیم شوې (GEMINI_API_KEYS).")
@@ -780,26 +899,14 @@ async def analyze(texts: list[str], config: Config) -> dict:
         # لاین (سرلیک) واخله — دا د سرلیک بدلون نه دی، یوازې د اضافي بدن پرې کول.
         if para:
             para = para.split("\n")[0].strip()
-        _, title = _split_source_title(para)
+        colon_src, title = _split_source_title(para)
         result[f"title_{lang}"] = title
-        result[f"source_{lang}"] = ""
-        if para:
-            present[lang] = para
-
-    # ⚠️ د دریو ژبو سرچینې **یوځای** راباسو (نه یو په یو). دا درې خپلواک کالونه
-    # دي؛ پرله‌پسې یې ~۱۵–۲۵ ثانیې نیوه، اوس د یوه کال په اندازه وخت نیسي.
-    async def _one(lang: str, para: str) -> tuple[str, str]:
-        try:
-            return lang, await extract_source(_match_full_text(para, reports), config)
-        except Exception as err:  # noqa: BLE001 - سرچینه اختیاري ده
-            logger.warning("[%s] د سرچینې استخراج ناکام: %s", lang, err)
-            return lang, ""
-
-    if present:
-        for lang, src in await asyncio.gather(
-            *(_one(lg, para) for lg, para in present.items())
-        ):
-            result[f"source_{lang}"] = src or _DEFAULT_SOURCE[lang]
+        if not para:
+            result[f"source_{lang}"] = ""
+            continue
+        present[lang] = para
+        src = _clean_source(raw.get(f"source_{lang}") or "") or colon_src
+        result[f"source_{lang}"] = src or _DEFAULT_SOURCE[lang]
 
     verify_result(result, present)
     return result
