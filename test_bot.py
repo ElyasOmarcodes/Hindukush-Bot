@@ -1466,38 +1466,46 @@ def _quote_fit(text):
     return size, lines, fp, bw, bh, d
 
 
-def test_quote_takes_the_largest_size_that_leaves_no_gap():
-    """⚠️ regression: پخوا «تر ټولو لږه تشه» غوره کېده — چې تل ترټولو کوچنی فونټ و.
+def test_quote_size_stays_closest_to_the_default():
+    """قانون: **ډیفالټ سایز یا ورته نږدې** — نه ډیر کوچنی، نه ډیر لوی.
 
-    کشیده د فونټ سره لویږي، نو کوچنی فونټ تل ښه «دانه» لري او تشه یې لږه وي.
-    پایله دا شوه چې هر نقل قول په ۴۷–۶۰ کې راته — د ادارې ملګري په حق شکایت
-    کاوه. اوس باید **هیڅ لوی سایز** پاک (ځایېدونکی + بې تشې + بې زیاتې کشیدې) نه وي.
+    ⚠️ دوه پخوانۍ تېروتنې دواړه دلته بندېږي:
+      • «تر ټولو لږه تشه» → تل ترټولو کوچنی فونټ (۴۷–۵۹px) غوره کاوه،
+      • «تر ټولو لوی پاک سایز» → بل لور ته افراط (۹۳px د لنډ نقل قول لپاره).
+    اوس باید **هیڅ بل پاک سایز** ډیفالټ ته تر ټاکل شوي نږدې نه وي.
     """
     from modules.design.text_render import (
-        _GAP_TOL, _RAW_GAP_MAX, get_font, kashida_wrap, line_height,
-        text_width, worst_gap_after_kashida,
+        _is_clean, get_font, kashida_wrap, line_height,
     )
 
     for text in _QUOTE_SAMPLES:
         size, _lines, fp, bw, bh, d = _quote_fit(text)
-        top = d.quote_title_size + d.quote_fill_headroom
-        for bigger in range(size + 1, top + 1):
-            lines = kashida_wrap(text, fp, bigger, bw, False)
-            if len(lines) * line_height(get_font(fp, bigger), d.title_line_gap) > bh:
+        target = d.quote_title_size
+        lo = max(d.title_abs_min, target - 20)
+        for other in range(lo, target + d.quote_fill_headroom + 1):
+            if abs(other - target) >= abs(size - target):
+                continue                       # لرې یا برابر — پروا نلري
+            lines = kashida_wrap(text, fp, other, bw, False)
+            if len(lines) * line_height(get_font(fp, other), d.title_line_gap) > bh:
                 continue                       # ځای نه کیږي — سم دی
-            font = get_font(fp, bigger)
-            gap = worst_gap_after_kashida(lines, fp, bigger, bw, False)
-            raw = max((bw - text_width(font, ln, False) for ln in lines[:-1]),
-                      default=0.0)
-            assert not (gap <= _GAP_TOL * bw and raw <= _RAW_GAP_MAX * bw), (
-                f"{bigger}px هم پاک و خو {size}px وټاکل شو: {text[:30]}"
+            assert not _is_clean(lines, fp, other, bw, False), (
+                f"{other}px ډیفالټ ته نږدې او پاک و، خو {size}px وټاکل شو: {text[:30]}"
             )
 
 
-def test_short_quote_grows_past_the_default_size():
-    """لنډ نقل قول باید تر ډیفالټ (۶۵) پورته شي — نه دا چې باکس نیم تش پاتې شي."""
-    size, _lines, _fp, _bw, _bh, d = _quote_fit("امنیت په ټول هېواد کې تامین دی")
-    assert size > d.quote_title_size, f"لنډ نقل قول لا هم په {size}px کې دی"
+def test_short_quote_uses_the_default_size():
+    """لنډ نقل قول باید دقیقاً ډیفالټ سایز واخلي — نه ښکته او نه پورته."""
+    for text in ("امنیت په ټول هېواد کې تامین دی", "سوله زموږ لومړیتوب دی"):
+        size, _lines, _fp, _bw, _bh, d = _quote_fit(text)
+        assert size == d.quote_title_size, f"{size}px — ډیفالټ {d.quote_title_size} و"
+
+
+def test_quote_never_grows_far_past_the_default():
+    """متن هیڅکله تر ډیفالټ ډیر لوی نشي — headroom یوازې یو کوچنی ساتني بند دی."""
+    for text in _QUOTE_SAMPLES:
+        size, _lines, _fp, _bw, _bh, d = _quote_fit(text)
+        top = d.quote_title_size + d.quote_fill_headroom
+        assert size <= top, f"{size}px تر {top} پورته دی: {text[:30]}"
 
 
 def test_long_quote_is_not_shrunk_to_a_tiny_size():

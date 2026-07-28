@@ -83,7 +83,7 @@
 
     "quote_title_font": "FModam-FBold[@mimvid].ttf",
     "quote_title_size": 65,
-    "quote_fill_headroom": 20,
+    "quote_fill_headroom": 10,
     "quote_title_color_hex": "FFFFFF",
     "quote_highlight_color_hex": "FEA20E",
     "quote_highlight_fraction": 0.40,

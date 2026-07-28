@@ -78,9 +78,9 @@ class DesignConfig:
     quote_canvas_size: int = 1353
     quote_title_font: str = "FModam-FBold[@mimvid].ttf"
     quote_title_size: int = 65
-    # لنډ نقل قول ته اجازه چې تر ډیفالټ پورته شي ترڅو باکس (۵۵۴×۶۸۷) ډک کړي.
-    # (بې دې، هر نقل قول په ۶۵ یا تر هغه ښکته پاتې کېده — متن ډیر کوچنی ښکارېده.)
-    quote_fill_headroom: int = 20
+    # که پخپله ډیفالټ سایز پاک نه و (تشه یا زیاتې کشیدې غواړي)، دومره پورته هم
+    # وکتل شي. مقصد **ډیفالټ ته نږدې** پاتې کېدل دی — نه تر ډیفالټه ډیر لوی متن.
+    quote_fill_headroom: int = 10
     quote_title_color_hex: str = "FFFFFF"
     quote_highlight_color_hex: str = "FEA20E"   # لکه د خبر عنوان هایلایټ
     quote_highlight_fraction: float = 0.40      # اخیري ۳۵–۴۵٪
