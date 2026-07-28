@@ -10,4 +10,6 @@ __pycache__/
 # Runtime data
 data/packages/
 data/pending/
+# د کوټې حافظه (د بیا-پیل لپاره) — محلي حالت دی، ګیټ ته نه ځي.
+data/quota_state.json
 logs/

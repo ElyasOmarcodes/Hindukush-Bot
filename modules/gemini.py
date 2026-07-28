@@ -15,6 +15,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from itertools import permutations
 
+from pathlib import Path
+
 from .config import Config
 
 logger = logging.getLogger("gemini")
@@ -433,6 +435,8 @@ class QuotaTracker:
         # د پرله‌پسې ورووالي شمېر — هر ځل کولډاون دوه برابره شي (۴۵s، ۹۰s، …).
         # نه‌نو یو تل-ورو مډل هره دوره ۱۲ ثانیې خوري.
         self._slow_strikes: dict[str, int] = {}
+        # د ډیسک فایل — که ورکړل شي، هر بدلون خوندي کیږي (د بیا-پیل لپاره).
+        self._path: Path | None = None
 
     def clear(self) -> None:
         self._until.clear()
@@ -447,6 +451,7 @@ class QuotaTracker:
         if model not in self._model_until or until > self._model_until[model]:
             self._model_until[model] = until
             self._model_reason[model] = reason
+            self._save()
             logger.info("%s: **%s** (ټولې کیلۍ) — %.0f ثانیې پرېښودل کیږي",
                         reason, model, seconds)
 
@@ -473,12 +478,72 @@ class QuotaTracker:
             return None
         return until
 
+    # ─────────── پر ډیسک ساتل (د بیا-پیل ژغورنه) ───────────
+
+    def attach(self, path) -> None:
+        """د ډیسک فایل ورسره وتړه او هغه څه چې دمخه زده شوي، بیرته ولوله.
+
+        ⚠️ حافظه یوازې په RAM کې وه، نو د **هر بیا-پیل** وروسته له سره زده کېده —
+        او هره «لومړۍ دوره» یې د ورو مډل ۱۲ ثانیې ورکولې. اوس یې پر ډیسک ساتو.
+        """
+        self._path = Path(path)
+        try:
+            data = json.loads(self._path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001 - فایل نشته یا خراب دی
+            return
+        now = _now_utc()
+        loaded = 0
+        for item in data.get("pairs", []):
+            try:
+                until = datetime.fromisoformat(item["until"])
+            except Exception:  # noqa: BLE001
+                continue
+            if until > now:
+                self._until[(item["model"], int(item["key"]))] = until
+                self._reason[(item["model"], int(item["key"]))] = item.get("reason", "")
+                loaded += 1
+        for item in data.get("models", []):
+            try:
+                until = datetime.fromisoformat(item["until"])
+            except Exception:  # noqa: BLE001
+                continue
+            if until > now:
+                self._model_until[item["model"]] = until
+                self._model_reason[item["model"]] = item.get("reason", "")
+                loaded += 1
+        self._slow_strikes.update({k: int(v) for k, v in (data.get("slow") or {}).items()})
+        if loaded:
+            logger.info("د کوټې حافظه له ډیسک بیرته ولوستل شوه — %d بندښتونه", loaded)
+
+    def _save(self) -> None:
+        if self._path is None:
+            return
+        now = _now_utc()
+        data = {
+            "pairs": [
+                {"model": m, "key": k, "until": u.isoformat(),
+                 "reason": self._reason.get((m, k), "")}
+                for (m, k), u in self._until.items() if u > now
+            ],
+            "models": [
+                {"model": m, "until": u.isoformat(), "reason": self._model_reason.get(m, "")}
+                for m, u in self._model_until.items() if u > now
+            ],
+            "slow": self._slow_strikes,
+        }
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        except Exception as err:  # noqa: BLE001 - ساتل حیاتي نه دي
+            logger.debug("د کوټې حافظې ساتل: %s", err)
+
     def block_until(self, model: str, key_idx: int, until: datetime, reason: str) -> None:
         key = (model, key_idx)
         # تل اوږد کولډاون وساته (ورځنۍ کوټه تر لنډې مهمه ده).
         if key not in self._until or until > self._until[key]:
             self._until[key] = until
             self._reason[key] = reason
+            self._save()
 
     def block_daily(self, model: str, key_idx: int) -> datetime:
         """تر راتلونکې نیمې شپې (Los Angeles) پورې یې پرېږده."""

@@ -1735,3 +1735,51 @@ def test_success_clears_slow_strikes_for_that_model():
         assert "m2" not in gemini.quota._slow_strikes
     finally:
         gemini.quota.clear()
+
+
+def test_quota_memory_survives_a_restart(tmp_path):
+    """⚠️ حافظه یوازې په RAM کې وه — د **هر بیا-پیل** وروسته له سره زده کېده.
+
+    ستاسو په لاګونو کې هره «لومړۍ دوره» د ورو مډل ۱۲ ثانیې ورکولې، ځکه
+    کانټینر تازه پیل شوی و. اوس حافظه پر ډیسک ساتل کیږي.
+    """
+    f = tmp_path / "quota_state.json"
+
+    q1 = gemini.QuotaTracker()
+    q1.attach(f)
+    q1.note(RuntimeError("429 quotaId: 'GenerateRequestsPerDayPerProjectPerModel-FreeTier'"),
+            "m1", 1)
+    q1.note_slow("m2")
+    assert f.exists()
+
+    # کانټینر بیا پیل شو → نوی tracker، هماغه فایل.
+    q2 = gemini.QuotaTracker()
+    q2.attach(f)
+    assert q2.is_blocked("m1", 1), "ورځنۍ کوټه باید پاتې وي"
+    assert q2.is_blocked("m2", 1) and q2.is_blocked("m2", 7), "د مډل بندښت باید پاتې وي"
+    assert not q2.is_blocked("m3", 1), "نور مډلونه باید خلاص وي"
+    assert q2._slow_strikes.get("m2") == 1
+
+
+def test_expired_blocks_are_dropped_on_load(tmp_path):
+    """تېر شوي بندښتونه د لوستلو پر مهال نه راځي."""
+    from datetime import timedelta
+    f = tmp_path / "q.json"
+    q1 = gemini.QuotaTracker()
+    q1.attach(f)
+    q1.block_model("m1", 60, "ورو")
+    q1._model_until["m1"] = gemini._now_utc() - timedelta(seconds=5)
+    q1._save()
+
+    q2 = gemini.QuotaTracker()
+    q2.attach(f)
+    assert not q2.is_blocked("m1", 1)
+
+
+def test_corrupt_quota_file_is_ignored(tmp_path):
+    """خراب فایل باید رباټ ونه دروي."""
+    f = tmp_path / "q.json"
+    f.write_text("{ this is not json", encoding="utf-8")
+    q = gemini.QuotaTracker()
+    q.attach(f)          # باید خطا ورنکړي
+    assert q.status() == []

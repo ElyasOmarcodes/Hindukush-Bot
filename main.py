@@ -8,6 +8,7 @@ error handler so a single failure never stops the loop, and starts polling.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from telegram import BotCommand, Update
 from telegram.error import Conflict
@@ -22,7 +23,7 @@ from telegram.ext import (
     filters,
 )
 
-from modules import commands, monitor
+from modules import commands, gemini, monitor
 from modules.config import Config, load_config
 from modules.design.text_render import ensure_raqm
 from modules.package import BotState
@@ -144,6 +145,8 @@ def main() -> None:
         )
 
     ensure_dirs(config.packages_dir, config.pending_dir, "logs")
+    # د کوټې حافظه پر ډیسک — د بیا-پیل وروسته له سره زده کول نه غواړي.
+    gemini.quota.attach(Path(config.packages_dir).parent / "quota_state.json")
     # د پیل کې چک — که Pillow بې راقم وي، دلیل یې همدلته څرګند شي.
     ensure_raqm()
 
