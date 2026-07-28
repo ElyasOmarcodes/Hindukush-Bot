@@ -368,6 +368,8 @@ _DEFAULT_SHORT_COOLDOWN = 60.0
 _OVERLOAD_COOLDOWN = 20.0
 # ورو (timeout) جوړه — لنډ یې پریږدو، ښایي بیا ژر شي.
 _SLOW_COOLDOWN = 45.0
+# د پرله‌پسې ورووالي اعظمي کولډاون (۱۵ دقیقې).
+_SLOW_COOLDOWN_MAX = 900.0
 
 
 def _now_utc() -> datetime:
@@ -428,12 +430,16 @@ class QuotaTracker:
         # کې نورې کیلۍ ازمویل بې‌ګټې دي — په لاګ کې یې ۴۰ ثانیې ضایع کړې.
         self._model_until: dict[str, datetime] = {}
         self._model_reason: dict[str, str] = {}
+        # د پرله‌پسې ورووالي شمېر — هر ځل کولډاون دوه برابره شي (۴۵s، ۹۰s، …).
+        # نه‌نو یو تل-ورو مډل هره دوره ۱۲ ثانیې خوري.
+        self._slow_strikes: dict[str, int] = {}
 
     def clear(self) -> None:
         self._until.clear()
         self._reason.clear()
         self._model_until.clear()
         self._model_reason.clear()
+        self._slow_strikes.clear()
 
     def block_model(self, model: str, seconds: float, reason: str) -> None:
         """ټول مډل (ټولې کیلۍ) لنډ وخت پریږده."""
@@ -443,6 +449,18 @@ class QuotaTracker:
             self._model_reason[model] = reason
             logger.info("%s: **%s** (ټولې کیلۍ) — %.0f ثانیې پرېښودل کیږي",
                         reason, model, seconds)
+
+    def note_slow(self, model: str) -> float:
+        """مډل ورو و — کولډاون یې (په زیاتیدونکي ډول) ورکړه او شمېره یې لوړه کړه."""
+        strikes = self._slow_strikes.get(model, 0) + 1
+        self._slow_strikes[model] = strikes
+        cooldown = min(_SLOW_COOLDOWN * (2 ** (strikes - 1)), _SLOW_COOLDOWN_MAX)
+        self.block_model(model, cooldown, f"ورو مډل (×{strikes})")
+        return cooldown
+
+    def note_success(self, model: str) -> None:
+        """مډل بیا سم ځواب ورکړ — د ورووالي شمېره یې پاکه کړه."""
+        self._slow_strikes.pop(model, None)
 
     def model_blocked_until(self, model: str) -> datetime | None:
         until = self._model_until.get(model)
@@ -556,11 +574,10 @@ async def _cascade(prompt: str, config: Config) -> str:
     from google import genai
 
     clients = [(i + 1, genai.Client(api_key=k)) for i, k in enumerate(config.gemini_api_keys)]
-    timeout = float(getattr(config, "gemini_timeout", 20.0) or 20.0)
+    timeout = float(getattr(config, "gemini_timeout", 12.0) or 12.0)
     last_error: Exception | None = None
     tried = 0
     skipped = 0
-    slow: dict[str, int] = {}
 
     for model in config.gemini_models:
         for key_idx, client in clients:
@@ -578,21 +595,21 @@ async def _cascade(prompt: str, config: Config) -> str:
                     timeout=timeout,
                 )
                 if resp.text and resp.text.strip():
+                    quota.note_success(model)   # ورووالی یې پای ته ورسید
                     logger.info("Gemini بریالی: %s / کیلي #%d (%.1fs)",
                                 model, key_idx, time.monotonic() - started)
                     return resp.text
                 raise RuntimeError("خالي ځواب")
             except (asyncio.TimeoutError, TimeoutError) as err:
                 last_error = err
-                quota.block_seconds(model, key_idx, _SLOW_COOLDOWN, "ورو ځواب")
-                slow[model] = slow.get(model, 0) + 1
-                logger.warning("Gemini ورو و (%s / کیلي #%d): تر %.0fs زیات — بل ته ځم",
-                               model, key_idx, timeout)
-                # دوه کیلۍ چې ورو شوې → ستونزه د مډل ده، نه د کیلي.
-                if slow[model] >= 2:
-                    quota.block_model(model, _SLOW_COOLDOWN, "ورو مډل")
-                    break
-                continue
+                # ⚠️ ورووالی د **مډل/سرویس** حالت دی، نه د کیلي — کیلي متن نه ورو
+                # کوي. نو ټول مډل پریږدو او سمدلاسه بل ته ځو. (په لاګ کې دوه
+                # کیلۍ ژر ناکامې شوې او دریمه ۲۰s ورو وه — د «دوه ورو» شرط هیڅکله
+                # ونه لګېد، نو ۲۰ ثانیې ضایع شوې.)
+                cooldown = quota.note_slow(model)
+                logger.warning("Gemini ورو و (%s / کیلي #%d): تر %.0fs زیات — "
+                               "مډل %.0fs پریږدم", model, key_idx, timeout, cooldown)
+                break   # نورې کیلۍ د همدې مډل مه ازموه
             except Exception as err:  # noqa: BLE001 - cascade په قصد پراخ دی
                 last_error = err
                 quota.note(err, model, key_idx)   # کولډاون یې یاد وساته

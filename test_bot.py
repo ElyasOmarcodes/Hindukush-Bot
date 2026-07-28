@@ -1585,11 +1585,12 @@ def test_slow_gemini_call_times_out_and_moves_on():
 
 
 def test_gemini_timeout_is_configurable():
+    """بریالي کالونه ۲.۵–۵.۰s نیسي، نو ۱۲s دوه‌برابره ځای دی."""
     cfg = load_config("config/settings.json")
-    assert cfg.gemini_timeout == 20.0
+    assert cfg.gemini_timeout == 12.0
     import json as _j
     raw = _j.loads(Path("config/settings.json").read_text(encoding="utf-8"))
-    assert raw["gemini"]["timeout"] == 20.0
+    assert raw["gemini"]["timeout"] == 12.0
 
 
 # ---------- د مډل کچې کولډاون ----------
@@ -1660,8 +1661,12 @@ def test_overload_blocks_the_whole_model_not_just_one_key():
         gemini.quota.clear()
 
 
-def test_two_slow_keys_escalate_to_a_model_level_block():
-    """که د یوه مډل دوه کیلۍ ورو شي، ستونزه د مډل ده — دریمه مه ازموه."""
+def test_a_timeout_blocks_the_whole_model_immediately():
+    """⚠️ ورووالی د **سرویس** حالت دی، نه د کیلي — نورې کیلۍ مه ازموه.
+
+    په لاګ کې دوه کیلۍ ژر (429) ناکامې شوې او دریمه ۲۰s ورو وه؛ د «دوه ورو»
+    شرط هیڅکله ونه لګېد، نو ۲۰ ثانیې ضایع شوې.
+    """
     import asyncio
     from modules.config import Config
 
@@ -1679,8 +1684,8 @@ def test_two_slow_keys_escalate_to_a_model_level_block():
     try:
         assert asyncio.run(gemini._cascade("p", cfg)) == "OK"
         m1_tries = [a for a in attempts if a[0] == "m1"]
-        assert len(m1_tries) == 2, f"دریمه کیلي هم وازمویل شوه: {attempts}"
-        assert gemini.quota.is_blocked("m1", 3)
+        assert len(m1_tries) == 1, f"باید یوازې یوه کیلي وازمویل شي: {attempts}"
+        assert gemini.quota.is_blocked("m1", 2) and gemini.quota.is_blocked("m1", 3)
     finally:
         gemini.quota.clear()
 
@@ -1693,3 +1698,40 @@ def test_model_block_appears_in_status_and_expires():
     assert any("ټول مډل" in s for s in q.status())
     q._model_until["m1"] = gemini._now_utc() - timedelta(seconds=1)
     assert not q.is_blocked("m1", 1), "وخت چې تېر شي، مډل بیرته فعالیږي"
+
+
+def test_repeatedly_slow_model_gets_escalating_cooldown():
+    """تل-ورو مډل باید هره دوره وخت ونه خوري — کولډاون یې دوه برابره کیږي."""
+    q = gemini.QuotaTracker()
+    waits = [q.note_slow("m1") for _ in range(5)]
+    assert waits == [45.0, 90.0, 180.0, 360.0, 720.0], waits
+    assert q.note_slow("m1") == 900.0, "باید پر اعظمي حد ودریږي"
+    # بریالی کال شمېره پاکوي.
+    q.note_success("m1")
+    assert q.note_slow("m1") == 45.0
+
+
+def test_success_clears_slow_strikes_for_that_model():
+    import asyncio
+    from modules.config import Config
+
+    attempts = []
+    calls = {"n": 0}
+
+    async def behave(model, key):
+        calls["n"] += 1
+        if model == "m1" and calls["n"] == 1:
+            await asyncio.sleep(5)      # لومړی ځل ورو
+
+    _stub_genai(attempts, behave)
+    cfg = Config(gemini_api_keys=["k1"])
+    cfg.models = ["m1", "m2"]
+    cfg.gemini_timeout = 0.3
+    gemini.quota.clear()
+    try:
+        asyncio.run(gemini._cascade("p", cfg))
+        assert gemini.quota._slow_strikes.get("m1") == 1
+        # m2 بریالی و → هیڅ strike نلري.
+        assert "m2" not in gemini.quota._slow_strikes
+    finally:
+        gemini.quota.clear()

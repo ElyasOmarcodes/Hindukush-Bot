@@ -113,10 +113,10 @@ class Config:
     timezone: str = "Asia/Kabul"
 
     gemini_api_keys: list[str] = field(default_factory=list)
-    # د یوه Gemini کال اعظمي وخت (ثانیې). پرته له دې، یو ورو ځواب ټول پایپ‌لاین
-    # بندوي — په لاګ کې مو یو کال ۳۸ ثانیې ونیوې، حال دا چې بل مډل ۲.۵s کې
-    # ځواب ورکړ. که وخت تېر شي، هغه (مډل، کیلي) پریږدو او بل ته ځو.
-    gemini_timeout: float = 20.0
+    # د یوه Gemini کال اعظمي وخت (ثانیې). بریالي کالونه ۲.۵–۵.۰ ثانیې نیسي،
+    # نو ۱۲ دوه‌برابره ځای ورکوي. که وخت تېر شي، **ټول مډل** پریږدو (ورووالی د
+    # سرویس حالت دی، نه د کیلي) او سمدلاسه بل مډل ته ځو.
+    gemini_timeout: float = 12.0
     # د مډلونو ترتیب لښتی — له تر ټولو قوي څخه ضعیف. cascade **یوازې** دا ترتیب کاروي.
     # Fixed, ordered model list (strongest first). No other models are used.
     models: list[str] = field(default_factory=lambda: [
@@ -192,7 +192,7 @@ def load_config(settings_path: str | Path = "config/settings.json") -> Config:
         pending_dir=tg.get("pending_dir", "data/pending"),
         timezone=data.get("timezone", "Asia/Kabul"),
         gemini_api_keys=list(gm.get("api_keys", []) or []),
-        gemini_timeout=float(gm.get("timeout", 20.0)),
+        gemini_timeout=float(gm.get("timeout", 12.0)),
         max_items=int(pk.get("max_items", 4)),
         # NOTE: `models` filled below (only if settings.json provides a list).
         max_images=int(pk.get("max_images", 1)),
