@@ -378,8 +378,10 @@ def test_quote_sizes_from_settings_json():
     assert cfg.design.quote_name_size == 35
     assert cfg.design.quote_rank_size == 40
     raw = json.loads(Path("config/settings.json").read_text(encoding="utf-8"))
-    for key in ("quote_title_size", "quote_name_size", "quote_rank_size"):
+    for key in ("quote_title_size", "quote_name_size", "quote_rank_size",
+                "quote_fill_headroom"):
         assert key in raw["design"], f"{key} باید په settings.json کې جلا درج وي"
+    assert cfg.design.quote_fill_headroom > 0, "نقل قول باید تر ډیفالټ لوی هم شي"
 
 
 def test_pillow_has_raqm():
@@ -1433,6 +1435,109 @@ def test_no_line_is_left_completely_unjustified():
         filled = justify_line(ln, lambda t: text_width(font, t, False), bw, seed=i)
         gap = bw - text_width(font, filled, False)
         assert gap / bw < 0.02, f"لاین {i} کې {100 * gap / bw:.1f}٪ تشه پاتې ده"
+
+
+# ---------- د نقل قول د متن اندازه (د ادارې شکایت: «متن ډیر کوچنی دی») ----------
+
+_QUOTE_SAMPLES = [
+    "رویداد بدخشان از حمایت مردمی برخوردار نیست و تلاش می‌شود از طریق "
+    "شایعات، ناامنی ایجاد شود",
+    "زه ډاډ ورکوم چې د افغانستان اقتصادي وضعیت به په راتلونکي کال کې ښه شي",
+    "موږ له ټولو هېوادونو سره ښې اړیکې غواړو او هیچا ته اجازه نه ورکوو چې "
+    "زموږ خاوره وکاروي",
+    "ما اطمینان می‌دهیم که وضعیت اقتصادی افغانستان در سال آینده بهبود خواهد "
+    "یافت و مردم شاهد تغییرات مثبت خواهند بود",
+    "امنیت په ټول هېواد کې تامین دی",
+]
+
+
+def _quote_fit(text):
+    """د نقل قول د باکس لپاره (سایز، لاینونه، fp، bw، bh، dcfg) راګرځوي."""
+    from pathlib import Path as _P
+    from modules.design.layout import QUOTE_TITLE_BOX
+    from modules.design.text_render import fit_to_box
+
+    d = load_config("config/settings.json").design
+    fp = str(_P(d.fonts_dir) / d.quote_title_font)
+    bw, bh = QUOTE_TITLE_BOX[2], QUOTE_TITLE_BOX[3]
+    size, lines = fit_to_box(text, fp, bw, bh, d.title_line_gap,
+                             d.quote_title_size, d.title_abs_min, False,
+                             headroom=d.quote_fill_headroom)
+    return size, lines, fp, bw, bh, d
+
+
+def test_quote_takes_the_largest_size_that_leaves_no_gap():
+    """⚠️ regression: پخوا «تر ټولو لږه تشه» غوره کېده — چې تل ترټولو کوچنی فونټ و.
+
+    کشیده د فونټ سره لویږي، نو کوچنی فونټ تل ښه «دانه» لري او تشه یې لږه وي.
+    پایله دا شوه چې هر نقل قول په ۴۷–۶۰ کې راته — د ادارې ملګري په حق شکایت
+    کاوه. اوس باید **هیڅ لوی سایز** پاک (ځایېدونکی + بې تشې + بې زیاتې کشیدې) نه وي.
+    """
+    from modules.design.text_render import (
+        _GAP_TOL, _RAW_GAP_MAX, get_font, kashida_wrap, line_height,
+        text_width, worst_gap_after_kashida,
+    )
+
+    for text in _QUOTE_SAMPLES:
+        size, _lines, fp, bw, bh, d = _quote_fit(text)
+        top = d.quote_title_size + d.quote_fill_headroom
+        for bigger in range(size + 1, top + 1):
+            lines = kashida_wrap(text, fp, bigger, bw, False)
+            if len(lines) * line_height(get_font(fp, bigger), d.title_line_gap) > bh:
+                continue                       # ځای نه کیږي — سم دی
+            font = get_font(fp, bigger)
+            gap = worst_gap_after_kashida(lines, fp, bigger, bw, False)
+            raw = max((bw - text_width(font, ln, False) for ln in lines[:-1]),
+                      default=0.0)
+            assert not (gap <= _GAP_TOL * bw and raw <= _RAW_GAP_MAX * bw), (
+                f"{bigger}px هم پاک و خو {size}px وټاکل شو: {text[:30]}"
+            )
+
+
+def test_short_quote_grows_past_the_default_size():
+    """لنډ نقل قول باید تر ډیفالټ (۶۵) پورته شي — نه دا چې باکس نیم تش پاتې شي."""
+    size, _lines, _fp, _bw, _bh, d = _quote_fit("امنیت په ټول هېواد کې تامین دی")
+    assert size > d.quote_title_size, f"لنډ نقل قول لا هم په {size}px کې دی"
+
+
+def test_long_quote_is_not_shrunk_to_a_tiny_size():
+    """اوږد نقل قول هم باید مسلکي اندازه ولري — نه ۴۷–۴۸px لکه پخوا."""
+    for text in _QUOTE_SAMPLES:
+        size, lines, fp, bw, bh, d = _quote_fit(text)
+        assert size >= 52, f"{size}px ډیر کوچنی دی: {text[:30]}"
+
+
+def test_quote_lines_still_have_no_gap_after_the_size_bump():
+    """د سایز لوړول باید زموږ د «۱٪ تشه هم نه» قانون مات نه کړي."""
+    from modules.design.text_render import worst_gap_after_kashida
+
+    for text in _QUOTE_SAMPLES:
+        size, lines, fp, bw, _bh, _d = _quote_fit(text)
+        gap = worst_gap_after_kashida(lines, fp, size, bw, False)
+        assert gap / bw < 0.02, f"{100 * gap / bw:.1f}٪ تشه پاتې ده: {text[:30]}"
+
+
+def test_kashida_wrap_beats_plain_wrap_on_leftover_gap():
+    """د مات‌ځایونو انتخاب باید د **کشیدې وروسته** پاتې تشه کمه کړي، نه خامه تشه."""
+    from pathlib import Path as _P
+    from modules.design.layout import QUOTE_TITLE_BOX
+    from modules.design.text_render import (
+        kashida_wrap, worst_gap_after_kashida, wrap_text,
+    )
+
+    d = load_config("config/settings.json").design
+    fp = str(_P(d.fonts_dir) / d.quote_title_font)
+    bw = QUOTE_TITLE_BOX[2]
+    better = 0
+    for text in _QUOTE_SAMPLES:
+        for size in (54, 61, 74):
+            a = worst_gap_after_kashida(kashida_wrap(text, fp, size, bw, False),
+                                        fp, size, bw, False)
+            b = worst_gap_after_kashida(wrap_text(text, fp, size, bw, False),
+                                        fp, size, bw, False)
+            if a < b - 0.5:
+                better += 1
+    assert better, "kashida_wrap له ساده wrap څخه هیڅ ښه نه و"
 
 
 # ---------- د منو د اړیکو پاکول ----------

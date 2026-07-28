@@ -109,9 +109,17 @@ def wrap_text(text: str, font_path: str, size: int, max_w: int, is_english: bool
     return lines or [""]
 
 
-# تر لومړي ځایېدونکي سایز څو پوائنټه ښکته وګورو چې تر ټولو لږ تشه ومومو.
+# تر لومړي (لوی) ځایېدونکي سایز څو پوائنټه ښکته وګورو چې پاک-جاسټیفای سایز ومومو.
 # ډیر مه ښکته کوه — کوچنی فونټ پخپله یو نقص دی.
-_RAGGED_SHRINK = 10
+_RAGGED_SHRINK = 12
+# د لاین د پاتې تشې اعظمي حد (د باکس د عرض برخه) — تر دې زیاته تشه نه منو.
+_GAP_TOL = 0.02
+# د wrap پر مهال د خامې (د کشیدې مخکې) تشې غوره سقف — DP یې ساتي که وسه یې وي.
+_RAW_GAP_CAP = 0.22
+# د سایز د ټاکلو پر مهال مطلق سقف: لاین باید تر کشیدې مخکې لږ تر لږه ۵۵٪ ډک وي.
+# (بې دې، لوی سایز به یو لاین ته یوازې یوه کلمه پریږدي او کشیده به یې نیمایي ډکه
+#  کړي — «افـــغـــانـــســـتـــان» — چې د کشیدې د کم کارولو قانون ماتوي.)
+_RAW_GAP_MAX = 0.45
 
 
 def raggedness(lines: list[str], font_path: str, size: int, box_w: int,
@@ -148,19 +156,96 @@ def worst_gap_after_kashida(lines: list[str], font_path: str, size: int,
     return worst
 
 
-def fit_to_box(text: str, font_path: str, box_w: int, box_h: int, gap: int,
-               target: int, floor: int, is_english: bool):
-    """ټول متن د باکس دننه ځای کړه (بې کلیپ) — او **تر ټولو لږ تشه** غوره کړه.
+def kashida_width(font: ImageFont.FreeTypeFont) -> float:
+    """د یوې کشیدې پراخي (px) — «بـب» منفي «بب».
 
-    ⚠️ یوازې «لومړی سایز چې ځای شي» اخیستل کافي نه دي: هغه کیدای شي داسې لاینونه
-    جوړ کړي چې طبیعي توګه ډیر لنډ وي، بیا یې کشیده باید ډیره ډکه کړي —
-    «حمـــــــایت». نو له هغو سایزونو چې ځایېږي، هغه اخلو چې لاینونه یې دمخه
-    ډیر ډک وي؛ په دې سره **کشیدې ته لږ اړتیا** پیدا کیږي (ښکلی ډیزاین).
+    ⚠️ دا شمېره د جاسټیفای **دانه‌والی** (granularity) دی: کشیده یو بشپړ توری دی،
+    نو د یوه لاین پاتې تشه تل تر یوې کشیدې کمه وي — لږه یې نشو کولی. او ځکه چې
+    د فونټ له سایز سره لویږي، لوی فونټ = درشته دانه. نو د wrap پر مهال باید
+    داسې مات‌ځایونه وټاکو چې خامه تشه یې **د کشیدې پر مضرب** ودریږي.
     """
+    return font.getlength("بـب") - font.getlength("بب")
+
+
+def kashida_wrap(text: str, font_path: str, size: int, box_w: int,
+                 is_english: bool) -> list[str]:
+    """داسې wrap چې د هر لاین خامه تشه **د کشیدې پر مضرب** نږدې ودریږي.
+
+    ⚠️ ساده wrap یوازې دا ګوري چې کلمه ځایېږي که نه. خو د کشیدې دانه‌والی
+    (~۲۰px په ۶۵ سایز کې) پدې مانا ده چې «۲۵px تشه» او «۴۰px تشه» یو شان نه دي:
+    لومړۍ یوه کشیده اخلي او ۵px پاتې کوي، دویمه دوه کشیدې اخلي او ۰px پاتې کوي.
+    نو DP د **پاتې تشې مربع** کموي، نه د خامې تشې.
+
+    پایله: لوی فونټ هم کولی شي لاینونه بشپړ ډک کړي — پخوا مو د تشې د کمولو
+    لپاره فونټ کوچنی کاوه (ځکه کوچنۍ کشیده = ښه دانه)، چې ډیزاین یې غیرمسلکي کاوه.
+    """
+    if is_english:
+        return wrap_text(text, font_path, size, box_w, is_english)
+    font = get_font(font_path, size)
+    words = text.split()
+    n = len(words)
+    if n < 2:
+        return words or [""]
+    kw = kashida_width(font) or 1.0
+    space = text_width(font, " ", is_english)
+    prefix = [0.0]
+    for w in words:
+        prefix.append(prefix[-1] + text_width(font, w, is_english))
+
+    def width(i: int, j: int) -> float:
+        return prefix[j] - prefix[i] + space * (j - i - 1)
+
+    INF = float("inf")
+    heavy = box_w * box_w  # د «کشیده یې نشي ډکولی» لاین جریمه
+    best = [INF] * (n + 1)
+    back = [-1] * (n + 1)
+    best[0] = 0.0
+    for j in range(1, n + 1):
+        for i in range(j):
+            if best[i] == INF:
+                continue
+            w = width(i, j)
+            if w > box_w and i + 1 < j:
+                continue                       # ډیر پراخ (یوه کلمه استثنا ده)
+            raw = max(0.0, box_w - w)
+            if j == n:
+                cost = 0.0                     # وروستی لاین justify نه کیږي
+            else:
+                left = raw - kw * int(raw // kw)   # د کشیدې وروسته پاتې تشه
+                cost = left * left + (heavy if raw > _RAW_GAP_CAP * box_w else 0.0)
+            if best[i] + cost < best[j]:
+                best[j] = best[i] + cost
+                back[j] = i
+    if best[n] == INF:
+        return wrap_text(text, font_path, size, box_w, is_english)
+    out, j = [], n
+    while j > 0:
+        i = back[j]
+        out.append(" ".join(words[i:j]))
+        j = i
+    return out[::-1]
+
+
+def fit_to_box(text: str, font_path: str, box_w: int, box_h: int, gap: int,
+               target: int, floor: int, is_english: bool, headroom: int = 0):
+    """ټول متن د باکس دننه ځای کړه (بې کلیپ) — **تر ټولو لوی** سایز چې تشه پرې نږدي.
+
+    ⚠️ پخوا مو له ځایېدونکو سایزونو څخه هغه اخیست چې پاتې تشه یې تر ټولو لږه وه.
+    خو کشیده د فونټ سره لویږي، نو «تر ټولو لږه تشه» تل **تر ټولو کوچنی فونټ** و —
+    د ادارې ملګري په حق شکایت کاوه چې متن ډیر کوچنی او غیرمسلکي ښکاري.
+
+    اوس ترتیب سم دی:
+      ۱. `kashida_wrap` هر سایز ته داسې مات‌ځایونه ورکوي چې تشه یې ډکېدونکې وي،
+      ۲. له هغو سایزونو چې **ځایېږي او تشه یې تر ۲٪ کمه ده**، تر ټولو لوی اخلو،
+      ۳. که هیڅ یو پاک نه و، هغه اخلو چې تشه یې تر ټولو لږه ده (بیا لوی سایز).
+
+    ``headroom`` لنډ متن ته اجازه ورکوي چې تر ډیفالټ سایز پورته شي (باکس ډک کړي).
+    """
+    hi = target + max(0, headroom)
     fitting: list[tuple[int, list[str]]] = []
     biggest: int | None = None
-    for size in range(target, floor - 1, -1):
-        lines = wrap_text(text, font_path, size, box_w, is_english)
+    for size in range(hi, floor - 1, -1):
+        lines = kashida_wrap(text, font_path, size, box_w, is_english)
         lh = line_height(get_font(font_path, size), gap)
         if len(lines) * lh <= box_h:
             if biggest is None:
@@ -170,13 +255,24 @@ def fit_to_box(text: str, font_path: str, box_w: int, box_h: int, gap: int,
             break                        # تر دې ښکته مه ځه — فونټ ډیر کوچنی کیږي
     if not fitting:
         return floor, wrap_text(text, font_path, floor, box_w, is_english)
-    # لږه **ریښتینې** پاتې تشه غوره ده؛ که تشې نږدې یو شان وې، لوی سایز غوره دی.
-    return min(
-        fitting,
-        key=lambda sl: (round(worst_gap_after_kashida(sl[1], font_path, sl[0],
-                                                      box_w, is_english)),
-                        target - sl[0]),
-    )
+
+    gaps = {
+        size: worst_gap_after_kashida(lines, font_path, size, box_w, is_english)
+        for size, lines in fitting
+    }
+    raw = {
+        size: max((box_w - text_width(get_font(font_path, size), ln, is_english)
+                   for ln in lines[:-1]), default=0.0)
+        for size, lines in fitting
+    }
+    # پاک = (۱) د کشیدې وروسته تشه نشته، او (۲) کشیدې ته یې زیاته اړتیا نه ده.
+    clean = [sl for sl in fitting
+             if gaps[sl[0]] <= _GAP_TOL * box_w and raw[sl[0]] <= _RAW_GAP_MAX * box_w]
+    if not clean:  # د کشیدې سقف نرم کړه — تشه نه‌شتون لومړیتوب لري
+        clean = [sl for sl in fitting if gaps[sl[0]] <= _GAP_TOL * box_w]
+    if clean:
+        return max(clean, key=lambda sl: sl[0])   # تر ټولو لوی پاک سایز
+    return min(fitting, key=lambda sl: (round(gaps[sl[0]]), -sl[0]))
 
 
 def descending_wrap(text: str, font_path: str, size: int, box_w: int,

@@ -80,6 +80,7 @@ def _draw_title(canvas, text: str, font_path: str, dcfg, is_english: bool) -> No
     size, lines = fit_to_box(
         text, font_path, bw, bh, dcfg.title_line_gap,
         dcfg.quote_title_size, dcfg.title_abs_min, is_english,
+        headroom=dcfg.quote_fill_headroom,
     )
     font = get_font(font_path, size)
     draw = ImageDraw.Draw(canvas)
