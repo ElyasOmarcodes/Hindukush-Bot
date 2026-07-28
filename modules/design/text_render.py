@@ -211,7 +211,9 @@ def descending_wrap(text: str, font_path: str, size: int, box_w: int,
             w = width(i, j)
             if w > box_w and i + 1 < j:
                 continue                      # ډیر پراخ (یوه کلمه استثنا ده)
-            ragged = 0.0 if j == n else (1 - min(w, box_w) / box_w) ** 2
+            # ⚠️ **وروستی لاین هم** حسابوو. که یې معاف کړو، DP به «۹۹٪ + ۵۹٪»
+            # بشپړ وګڼي — حال دا چې «۷۹٪ + ۷۹٪» ورته منځنی لري خو ډیر ښکلی دی.
+            ragged = (1 - min(w, box_w) / box_w) ** 2
             if i == 0:
                 cand, prev = (0.0, ragged), None
             else:
@@ -241,13 +243,21 @@ def descending_wrap(text: str, font_path: str, size: int, box_w: int,
 
 
 def find_best_size(text: str, font_path: str, box: tuple, is_english: bool, dcfg: DesignConfig):
-    """د نږدې-ډیفالټ رینج [normal_min..normal_max] څخه هغه سایز وټاکه چې د لاینونو
-    ترتیب یې تر ټولو ښه وي (پاسني لاینونه **په عرض** ≥ ښکتني، بې یتیم وروستي
-    لاین)، او ډیفالټ سایز ته نږدې وي. که متن تر normal_min هم لوی و، بیا تر
-    abs_min پورې کوچنی کوو ترڅو ټول ځای شي (هیڅکله کلیپ نه کوو).
+    """هغه سایز وټاکه چې لاینونه یې **تر ټولو ډک** وي او قانون یې مات نکړي.
+
+    ⚠️ پخوا مو له ځایېدونکو سایزونو څخه هغه اخیست چې **ډیفالټ سایز ته نږدې** وي.
+    خو دا د تش-فضا لامل کېده: یو عنوان په ۷۰ کې ۳ لاینه جوړوي چې ۶۰٪ ډک وي،
+    حال دا چې په ۶۶ کې ۲ لاینه جوړوي چې ۸۷٪ ډک دي. کارونکی خو **ډکوالی** ویني.
+
+    نو اوس ترتیب دا دی:
+      ۱. سرغړونه نشته (هیڅ ښکتنی لاین تر پاسني پراخ نه دی)،
+      ۲. لاینونه تر ټولو ډک (د ټولو لاینونو منځنۍ تشه — د وروستي په ګډون)،
+      ۳. بیا ډیفالټ سایز ته نږدې.
     """
     _, _, box_w, box_h = box
-    lo, hi, target = dcfg.title_normal_min, dcfg.title_normal_max, dcfg.title_target_size
+    lo, target = dcfg.title_normal_min, dcfg.title_target_size
+    # پورتنی حد: لنډ عنوان ته اجازه ورکوو چې لوی شي ترڅو باکس ډک کړي.
+    hi = dcfg.title_normal_max + dcfg.title_fill_headroom
 
     fitting = []
     for size in range(hi, lo - 1, -1):
@@ -257,7 +267,7 @@ def find_best_size(text: str, font_path: str, box: tuple, is_english: bool, dcfg
             fitting.append((size, lines))
     if fitting:
         return min(fitting, key=lambda sl: _balance_score(
-            sl[1], sl[0], target, font_path, is_english))
+            sl[1], sl[0], target, font_path, is_english, box_w))
 
     # نږدې-ډیفالټ رینج کې ونه ځایېد → تر abs_min پورې کوچنی کوه (شرینک-ټو-فټ).
     abs_min = min(dcfg.title_abs_min, lo)
@@ -271,21 +281,19 @@ def find_best_size(text: str, font_path: str, box: tuple, is_english: bool, dcfg
     return abs_min, wrap_text(text, font_path, abs_min, box_w, is_english)
 
 
-def _balance_score(lines: list[str], size: int, target: int,
-                   font_path: str, is_english: bool) -> tuple:
-    """د لاینونو د ترتیب کیفیت — کوچنی = ښه.
+def _balance_score(lines: list[str], size: int, target: int, font_path: str,
+                   is_english: bool, box_w: int) -> tuple:
+    """د لاینونو کیفیت — کوچنی = ښه.  (سرغړونې، تشه، له ډیفالټ واټن)
 
-    ⚠️ پخوا مو **کلمې** شمېرلې. خو کلمې مختلف اوږدوالی لري، نو ۷ لنډې کلمې
-    کیدای شي تر ۵ اوږدو **لنډې** وي — کارونکی خو **عرض** ویني، نه شمېر.
-    (بېلګه: «۶۹ تن از منسوبین وزارت دفاع از» = ۷ کلمې = ۸۵۳px، خو
-    «آموزش‌های مسلکی نظامی فارغ شدند» = ۵ کلمې = ۱۰۲۷px → قانون مات.)
-    نو اوس **په پکسل** پرتله کوو.
+    ⚠️ **تشه د ټولو لاینونو** (د وروستي په ګډون) اندازه کیږي. که یوازې نا-وروستي
+    وشمېرو، «یو ډک لاین + یو لنډ» به بشپړ ښکاره شي — حال دا چې کارونکی لنډ
+    لاین ویني.
     """
     font = get_font(font_path, size)
     widths = [text_width(font, ln, is_english) for ln in lines]
     violations = sum(1 for i in range(len(widths) - 1) if widths[i] < widths[i + 1] - 0.5)
-    widow = 1 if len(lines) >= 2 and len(lines[-1].split()) == 1 else 0
-    return (violations, widow, abs(size - target))
+    gaps = [(1 - min(w, box_w) / box_w) ** 2 for w in widths] if box_w else [0.0]
+    return (violations, round(sum(gaps) / len(gaps), 2), abs(size - target))
 
 
 def draw_title(canvas, text: str, font_path: str, box: tuple, is_english: bool, dcfg: DesignConfig) -> None:

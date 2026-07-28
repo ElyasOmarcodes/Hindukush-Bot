@@ -923,15 +923,17 @@ def test_balance_score_compares_pixel_width_not_word_count():
     upper = "۶۹ تن از منسوبین وزارت دفاع از"      # ۷ کلمې، خو لنډ
     lower = "آموزش‌های مسلکی نظامی فارغ شدند"     # ۵ کلمې، خو پراخ
 
-    bad = _balance_score([upper, lower], 70, 70, fp, False)
-    good = _balance_score([lower, upper], 70, 70, fp, False)
+    bad = _balance_score([upper, lower], 70, 70, fp, False, 1176)
+    good = _balance_score([lower, upper], 70, 70, fp, False, 1176)
     assert bad[0] == 1, "پراخ ښکتنی لاین باید سرغړونه وګڼل شي"
     assert good[0] == 0
     assert good < bad
 
     # بې-یتیم بهتر تر یتیم وروستي لاین.
-    assert _balance_score(["کابل ښار ته", "هرات ښار"], 70, 70, fp, False)[1] == 0
-    assert _balance_score(["کابل ښار ته", "هرات"], 70, 70, fp, False)[1] == 1
+    # لاینونه چې ډیر تش وي، تشه یې لوړه ده (دویم عنصر).
+    full = _balance_score([upper, lower], 70, 70, fp, False, 900)
+    empty = _balance_score([upper, lower], 70, 70, fp, False, 3000)
+    assert full[1] < empty[1], "پراخ باکس = ډیره تشه = بد سکور"
 
 
 def test_news_title_never_has_a_wider_lower_line():
@@ -1783,3 +1785,80 @@ def test_corrupt_quota_file_is_ignored(tmp_path):
     q = gemini.QuotaTracker()
     q.attach(f)          # باید خطا ورنکړي
     assert q.status() == []
+
+
+# ---------- د خبر عنوان: لاینونه باید باکس ډک کړي ----------
+
+_REAL_TITLES = [
+    ("fa", "نتانیاهو جهت بحث درباره ایران و همکاری‌های امنیتی با ترامپ، وارد واشنگتن شد"),
+    ("fa", "۷۷ فلسطینی در کرانه باختری فلسطین در سال جاری به شهادت رسیده‌اند"),
+    ("fa", "پنتاگون می‌گوید که در جنگ با ایران ۱۸ عسکر آمریکایی کشته و ۶۲۴ نفر زخمی شده‌اند"),
+    ("fa", "۶۹ تن از منسوبین وزارت دفاع از آموزش‌های مسلکی نظامی فارغ شدند"),
+    ("ps", "روان کال د فلسطین په لوېدیځه غاړه کې ۷۷ فلسطینیان شهیدان شوي"),
+    ("ps", "نتنیاهو له ټرمپ سره د ایران او امنیتي همکاریو د بحث په موخه واشنګټن ته رسېدلی"),
+    ("ps", "د دفاع وزارت ۶۹ منسوبین له مسلکي پوځي زده کړو فارغ شول"),
+    ("ps", "د کابل په ښار کې چاودنه وشوه"),
+    ("en", "77 Palestinians Martyred in the West Bank Since the Beginning of This Year"),
+    ("en", "Netanyahu Arrives in Washington for Talks With Trump on Iran and Security Cooperation"),
+    ("en", "Pentagon Says 18 U.S. Soldiers Killed, 624 Wounded Since Iran Conflict Began"),
+]
+
+
+def _title_fill(code, title):
+    from pathlib import Path as _P
+    from modules.design.layout import LANGS
+    from modules.design.text_render import find_best_size, get_font, text_width
+
+    d = load_config("config/settings.json").design
+    lg = [x for x in LANGS if x["code"] == code][0]
+    fp = str(_P(d.fonts_dir) / d.title_font)
+    box = lg["title_box"]
+    size, lines = find_best_size(title, fp, box, lg["is_english"], d)
+    font = get_font(fp, size)
+    widths = [text_width(font, ln, lg["is_english"]) for ln in lines]
+    return size, lines, widths, box[2]
+
+
+def test_news_title_lines_actually_fill_the_box():
+    """⚠️ regression: عنوان به د باکس نیمایي نیوله او پاتې یې تش و.
+
+    لامل: مو له ځایېدونکو سایزونو څخه هغه اخیست چې **ډیفالټ ته نږدې** وي، نه
+    هغه چې **لاینونه ډک** کړي. بېلګه: «نتانیاهو…» په ۷۰ کې ۳ لاینه/۶۰٪،
+    خو په ۶۶ کې ۲ لاینه/۸۷٪.
+    """
+    for code, title in _REAL_TITLES:
+        size, lines, widths, bw = _title_fill(code, title)
+        avg = sum(widths) / len(widths) / bw
+        widest = max(widths) / bw
+        # تر ټولو پراخ لاین باید ریښتیا **باکس** وکاروي — دا هغه نښه ده چې
+        # پخوا مو نه لرله (لاینونه د باکس ۶۰٪ پاتې کېدل).
+        assert widest >= 0.90, (
+            f"[{code}] تر ټولو پراخ لاین یوازې {100 * widest:.0f}٪ — سایز {size}: {title[:40]}"
+        )
+        # منځنی ډکوالی هم باید معقول وي (وروستی لاین طبیعي توګه لنډ وي).
+        assert avg >= 0.75, (
+            f"[{code}] منځنی ډکوالی {100 * avg:.0f}٪ — سایز {size}، {len(lines)} لاینه: {title[:40]}"
+        )
+
+
+def test_news_title_never_has_a_wider_lower_line_on_real_titles():
+    """قانون: هیڅ ښکتنی لاین تر پاسني پراخ نه دی — پر ټولو ریښتینو عنوانونو."""
+    for code, title in _REAL_TITLES:
+        _, _, widths, _ = _title_fill(code, title)
+        for i in range(len(widths) - 1):
+            assert widths[i] >= widths[i + 1] - 0.5, (
+                f"[{code}] لاین {i + 1} تر {i} پراخ دی — {title[:40]}"
+            )
+
+
+def test_short_title_grows_to_fill_the_box():
+    """لنډ عنوان باید لوی شي — نه دا چې په ۷۰ کې نیم-تش پاتې شي."""
+    size, lines, widths, bw = _title_fill("ps", "د کابل په ښار کې چاودنه وشوه")
+    d = load_config("config/settings.json").design
+    assert size > d.title_normal_max, f"لنډ عنوان لوی نشو (سایز {size})"
+    assert min(widths) / bw >= 0.85
+
+
+def test_fill_headroom_is_configurable():
+    d = load_config("config/settings.json").design
+    assert d.title_fill_headroom == 30
