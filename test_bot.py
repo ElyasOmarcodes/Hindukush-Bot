@@ -931,11 +931,11 @@ def test_balance_score_compares_pixel_width_not_word_count():
     assert good[0] == 0
     assert good < bad
 
-    # بې-یتیم بهتر تر یتیم وروستي لاین.
-    # لاینونه چې ډیر تش وي، تشه یې لوړه ده (دویم عنصر).
+    # تش لاینونه (دویم عنصر) او خامه تشه (څلورم) — دواړه په پراخ باکس کې خرابیږي.
     full = _balance_score([upper, lower], 70, 70, fp, False, 900)
     empty = _balance_score([upper, lower], 70, 70, fp, False, 3000)
-    assert full[1] < empty[1], "پراخ باکس = ډیره تشه = بد سکور"
+    assert full[1] < empty[1], "پراخ باکس = تش لاین"
+    assert full[3] < empty[3], "پراخ باکس = ډیره تشه"
 
 
 def test_news_title_never_has_a_wider_lower_line():
@@ -1935,23 +1935,20 @@ def _title_fill(code, title):
 def test_news_title_lines_actually_fill_the_box():
     """⚠️ regression: عنوان به د باکس نیمایي نیوله او پاتې یې تش و.
 
-    لامل: مو له ځایېدونکو سایزونو څخه هغه اخیست چې **ډیفالټ ته نږدې** وي، نه
-    هغه چې **لاینونه ډک** کړي. بېلګه: «نتانیاهو…» په ۷۰ کې ۳ لاینه/۶۰٪،
-    خو په ۶۶ کې ۲ لاینه/۸۷٪.
+    لامل **سایز نه و**: `descending_wrap` وروستی لاین هم شمېره، نو لاینونه یې
+    برابرول («۵۷٪ + ۵۷٪»). اوس وروستی لاین معاف دی، نو پاسني لاینونه ډکیږي
+    («۹۳٪ + ۲۱٪») — دقیقاً لکه د ادارې لاسي ډیزاین.
+
+    شرط: **هر نا-وروستی لاین** لږ تر لږه ۸۰٪ ډک. (وروستی لاین معاف دی.)
     """
+    from modules.design.text_render import _MIN_LINE_FILL
+
     for code, title in _REAL_TITLES:
         size, lines, widths, bw = _title_fill(code, title)
-        avg = sum(widths) / len(widths) / bw
-        widest = max(widths) / bw
-        # تر ټولو پراخ لاین باید ریښتیا **باکس** وکاروي — دا هغه نښه ده چې
-        # پخوا مو نه لرله (لاینونه د باکس ۶۰٪ پاتې کېدل).
-        assert widest >= 0.90, (
-            f"[{code}] تر ټولو پراخ لاین یوازې {100 * widest:.0f}٪ — سایز {size}: {title[:40]}"
-        )
-        # منځنی ډکوالی هم باید معقول وي (وروستی لاین طبیعي توګه لنډ وي).
-        assert avg >= 0.75, (
-            f"[{code}] منځنی ډکوالی {100 * avg:.0f}٪ — سایز {size}، {len(lines)} لاینه: {title[:40]}"
-        )
+        for i, w in enumerate(widths[:-1]):
+            assert w / bw >= _MIN_LINE_FILL, (
+                f"[{code}] لاین {i} یوازې {100 * w / bw:.0f}٪ ډک — سایز {size}: {title[:40]}"
+            )
 
 
 def test_news_title_never_has_a_wider_lower_line_on_real_titles():
@@ -1964,14 +1961,67 @@ def test_news_title_never_has_a_wider_lower_line_on_real_titles():
             )
 
 
-def test_short_title_grows_to_fill_the_box():
-    """لنډ عنوان باید لوی شي — نه دا چې په ۷۰ کې نیم-تش پاتې شي."""
-    size, lines, widths, bw = _title_fill("ps", "د کابل په ښار کې چاودنه وشوه")
+def _title_fill_at(code, title, size):
+    """په ټاکلي سایز کې (عرضونه، د باکس عرض) — که ځای نشي، None."""
+    from pathlib import Path as _P
+    from modules.design.layout import LANGS
+    from modules.design.text_render import (
+        descending_wrap, get_font, line_height, text_width,
+    )
+
     d = load_config("config/settings.json").design
-    assert size > d.title_normal_max, f"لنډ عنوان لوی نشو (سایز {size})"
-    assert min(widths) / bw >= 0.85
+    lg = [x for x in LANGS if x["code"] == code][0]
+    fp = str(_P(d.fonts_dir) / d.title_font)
+    bw, bh = lg["title_box"][2], lg["title_box"][3]
+    lines = descending_wrap(title, fp, size, bw, lg["is_english"])
+    if len(lines) * line_height(get_font(fp, size), d.title_line_gap) > bh:
+        return None
+    font = get_font(fp, size)
+    return [text_width(font, ln, lg["is_english"]) for ln in lines], bw
 
 
-def test_fill_headroom_is_configurable():
+def test_title_size_stays_at_the_default():
+    """⚠️ regression: عنوان په ۱۰۴–۱۰۷px کې راته — د ادارې لاسي ډیزاین ~۷۰ کاروي.
+
+    لامل: `_balance_score` کې تشه تر «له ډیفالټ واټن» مخکې وه، نو انتخاب تل تر
+    ټولو لوی سایز ته ټوپ وهه. اوس تشه یوازې یو **حد** دی (۸۰٪) او له هغو
+    انتخابونو چې شرط پوره کوي، ډیفالټ ته نږدې اخیستل کیږي.
+    """
+    from modules.design.text_render import _MIN_LINE_FILL
+
     d = load_config("config/settings.json").design
-    assert d.title_fill_headroom == 30
+    for code, title in _REAL_TITLES + [
+        ("ps", "د کابل په ښار کې چاودنه وشوه"),
+        ("fa", "روز گذشته ۵۳۶ خانواده مهاجر به کشور بازگشتند"),
+        ("en", "536 Returnee Families Return to Afghanistan"),
+    ]:
+        size, _lines, _widths, _bw = _title_fill(code, title)
+        assert d.title_normal_min <= size <= d.title_normal_max, (
+            f"[{code}] سایز {size} د [{d.title_normal_min}, {d.title_normal_max}] "
+            f"بند څخه بهر دی: {title[:40]}"
+        )
+        if abs(size - d.title_target_size) > 2:
+            # له ډیفالټ لرې تلل یوازې هغه وخت جواز لري چې پخپله ډیفالټ کې یو
+            # نا-وروستی لاین تش پاتې شي (لکه ۳ لاینه/۷۵٪ پرځای ۲ لاینه/۹۹٪).
+            at_target = _title_fill_at(code, title, d.title_target_size)
+            assert at_target is None or any(
+                w / at_target[1] < _MIN_LINE_FILL for w in at_target[0][:-1]
+            ), (
+                f"[{code}] سایز {size} له ډیفالټ ({d.title_target_size}) لرې دی "
+                f"بې لامله: {title[:40]}"
+            )
+
+
+def test_manual_reference_titles_match_the_hand_design():
+    """د ادارې لاسي ډیزاین سره پرتله — ۷۰px او لومړی لاین ~۹۳٪ ډک."""
+    size, _lines, widths, bw = _title_fill(
+        "fa", "روز گذشته ۵۳۶ خانواده مهاجر به کشور بازگشتند")
+    assert size == 70, f"سایز {size} — لاسي ډیزاین ۷۰ کاروي"
+    assert widths[0] / bw >= 0.90, f"لومړی لاین {100 * widths[0] / bw:.0f}٪ ډک"
+    assert len(widths) == 2 and widths[1] < widths[0]
+
+
+def test_fill_headroom_is_zero_so_titles_do_not_balloon():
+    """headroom باید ۰ وي — ډکوالی د wrap کار دی، نه د فونټ د لویولو."""
+    d = load_config("config/settings.json").design
+    assert d.title_fill_headroom == 0
