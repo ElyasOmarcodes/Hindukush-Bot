@@ -309,6 +309,58 @@ def _closest(above, below, target: int):
     return above if above[0] - target <= target - below[0] else below
 
 
+# ─────────── د ژبني مات‌ځای قواعد (د لاین پای/پیل) ───────────
+# ⚠️ ستونزه: «... روغتون **د**» / «جوړېدو ...» — د اضافت «د» له خپل اسم بېلېږي او
+# لاین «نیمایي کې» بندیږي. لاسي ډیزاین دا کار هیڅکله نه کوي. همدارنګه
+# «... زېربناوو د **په**» / «نښه کولو ...» — «په نښه کول» یوه ټوټه ده.
+#
+# دا ټکي له **راتلونکي** ټکي سره تړلي دي، نو د لاین په پای کې یتیم نه پریږدو:
+_TIE_NEXT = {
+    # پښتو
+    "د", "په", "له", "تر", "پر", "چې", "که", "او", "یا", "بې", "لکه", "پرته",
+    "ترڅو", "نه", "دا", "دغه", "هغه", "دې", "دغې", "هغې", "یو", "یوه", "یوې",
+    "څو", "ټول", "ټولو", "هر", "هره", "هیڅ", "ډېر", "ډیر", "خپل", "خپله",
+    # فارسي/دري
+    "از", "به", "با", "در", "بر", "تا", "و", "برای", "روی", "بدون", "طبق",
+    "این", "آن", "همه", "یک", "بی", "بلکه", "زیرا", "چون", "طی", "علیه", "درباره",
+}
+# دا ټکي له **پخواني** ټکي سره تړلي دي، نو د لاین په سر کې یې نه پریږدو:
+_TIE_PREV = {"یې", "مې", "مو", "هم", "را", "نیز", "است", "اند", "شوی", "شوې"}
+_TIE_STRIP = "،؛:.!?»«\"'()[]—–-"
+
+
+def _tie_next(word: str, is_english: bool) -> bool:
+    """آیا دا ټکی له راتلونکي سره تړلی دی (نو د لاین په پای کې یې مه پریږده)؟
+
+    ⚠️ **یوازې پښتو/دري.** د ادارې انګلیسي لاسي ډیزاین پخپله لاین په «to» پای ته
+    رسوي («536 Returnee Families Return to» | «Afghanistan»)، نو انګلیسي ته دا
+    قاعده نه پلي کوو — نه‌نو د لاسي نمونې خلاف ځو.
+    """
+    if is_english:
+        return False
+    return word.strip(_TIE_STRIP) in _TIE_NEXT
+
+
+def _tie_prev(word: str, is_english: bool) -> bool:
+    """آیا دا ټکی له پخواني سره تړلی دی (نو د لاین په سر کې یې مه پریږده)؟"""
+    if is_english:
+        return False
+    return word.strip(_TIE_STRIP) in _TIE_PREV
+
+
+def bad_breaks(lines: list[str], is_english: bool) -> int:
+    """څو ځله یو تړلی ټکی له خپل جوړې څخه د لاین په مات‌ځای بېل شوی."""
+    bad = 0
+    for idx, line in enumerate(lines[:-1]):
+        words = line.split()
+        nxt = lines[idx + 1].split()
+        if words and _tie_next(words[-1], is_english):
+            bad += 1
+        if nxt and _tie_prev(nxt[0], is_english):
+            bad += 1
+    return bad
+
+
 def descending_wrap(text: str, font_path: str, size: int, box_w: int,
                     is_english: bool) -> list[str]:
     """داسې wrap چې **هیڅ لاین تر پاسني پراخ نشي** او پاسني لاینونه ډک وي.
@@ -338,8 +390,16 @@ def descending_wrap(text: str, font_path: str, size: int, box_w: int,
         return prefix[j] - prefix[i] + space * (j - i - 1)
 
     INF = float("inf")
-    # best[(i, j)] = (سرغړونې، تشه) د هغه پریفکس لپاره چې وروستی لاین یې words[i:j]
-    best: dict[tuple[int, int], tuple[float, float]] = {}
+    # د مات‌ځای ژبنۍ جریمه: که د لاین وروستی ټکی له راتلونکي سره تړلی وي، یا د
+    # راتلونکي لاین لومړی ټکی له پخواني سره — «... روغتون د | جوړېدو ...».
+    def tie_cost(j: int) -> int:
+        if j >= n:
+            return 0                          # وروستی لاین — مات‌ځای نشته
+        return (1 if _tie_next(words[j - 1], is_english) else 0) \
+            + (1 if _tie_prev(words[j], is_english) else 0)
+
+    # best[(i, j)] = (سرغړونې، بد مات‌ځایونه، تشه) د هغه پریفکس چې وروستی لاین یې words[i:j]
+    best: dict[tuple[int, int], tuple[float, float, float]] = {}
     back: dict[tuple[int, int], tuple[int, int] | None] = {}
     for j in range(1, n + 1):
         for i in range(j):
@@ -348,20 +408,21 @@ def descending_wrap(text: str, font_path: str, size: int, box_w: int,
                 continue                      # ډیر پراخ (یوه کلمه استثنا ده)
             # وروستی لاین معاف دی — طبیعي توګه لنډ وي (پورته یادښت وګوره).
             ragged = 0.0 if j == n else (1 - min(w, box_w) / box_w) ** 2
+            tie = tie_cost(j)
             if i == 0:
-                cand, prev = (0.0, ragged), None
+                cand, prev = (0.0, float(tie), ragged), None
             else:
-                cand, prev = (INF, INF), None
+                cand, prev = (INF, INF, INF), None
                 for k in range(i):
                     if (k, i) not in best:
                         continue
-                    pv, pr = best[(k, i)]
+                    pv, pt, pr = best[(k, i)]
                     # سرغړونه: پاسنی لاین تر ښکتني **لنډ** وي.
                     viol = pv + (1 if width(k, i) < w - 0.5 else 0)
-                    score = (viol, pr + ragged)
+                    score = (viol, pt + tie, pr + ragged)
                     if score < cand:
                         cand, prev = score, (k, i)
-            if cand[0] < INF and (best.get((i, j), (INF, INF)) > cand):
+            if cand[0] < INF and (best.get((i, j), (INF, INF, INF)) > cand):
                 best[(i, j)] = cand
                 back[(i, j)] = prev
 
@@ -436,7 +497,8 @@ def _balance_score(lines: list[str], size: int, target: int, font_path: str,
     fills = [min(w, box_w) / box_w for w in head] if box_w else [1.0]
     empties = sum(1 for f in fills if f < _MIN_LINE_FILL)
     gaps = [(1 - f) ** 2 for f in fills]
-    return (violations, empties, abs(size - target), round(sum(gaps) / len(gaps), 2))
+    return (violations, bad_breaks(lines, is_english), empties,
+            abs(size - target), round(sum(gaps) / len(gaps), 2))
 
 
 def draw_title(canvas, text: str, font_path: str, box: tuple, is_english: bool, dcfg: DesignConfig) -> None:

@@ -931,11 +931,14 @@ def test_balance_score_compares_pixel_width_not_word_count():
     assert good[0] == 0
     assert good < bad
 
-    # تش لاینونه (دویم عنصر) او خامه تشه (څلورم) — دواړه په پراخ باکس کې خرابیږي.
+    # (سرغړونې، بد مات‌ځایونه، تش لاینونه، له ډیفالټ واټن، تشه)
+    # «... دفاع **از**» یو بد مات‌ځای دی — «از» له راتلونکي سره تړلی دی.
+    assert bad[1] == 1 and good[1] == 0, "د لاین په پای کې «از» باید بد مات‌ځای وي"
+
     full = _balance_score([upper, lower], 70, 70, fp, False, 900)
     empty = _balance_score([upper, lower], 70, 70, fp, False, 3000)
-    assert full[1] < empty[1], "پراخ باکس = تش لاین"
-    assert full[3] < empty[3], "پراخ باکس = ډیره تشه"
+    assert full[2] < empty[2], "پراخ باکس = تش لاین"
+    assert full[4] < empty[4], "پراخ باکس = ډیره تشه"
 
 
 def test_news_title_never_has_a_wider_lower_line():
@@ -1949,6 +1952,68 @@ def test_news_title_lines_actually_fill_the_box():
             assert w / bw >= _MIN_LINE_FILL, (
                 f"[{code}] لاین {i} یوازې {100 * w / bw:.0f}٪ ډک — سایز {size}: {title[:40]}"
             )
+
+
+# ---------- د مات‌ځای ژبني قواعد (د لاین پای/پیل) ----------
+
+_TIE_TITLES = [
+    # ⚠️ ریښتیني بېلګې چې رباټ ماتې کړې وې:
+    #   «... عمومي روغتون **د**» | «جوړېدو ...»  → «د جوړېدو» بېل شو
+    ("ps", "د زابل شملزو ولسوالۍ کې د ۴۸ میلیونه افغانیو په لګښت عمومي روغتون "
+           "د جوړېدو چارې پیل شوې"),
+    #   «... زېربناوو د **په**» | «نښه کولو ...»  → «په نښه کول» بېل شو
+    ("ps", "ايران د سیمې د انرژۍ مهمو زېربناوو د په نښه کولو ګواښ کړی"),
+    ("fa", "روز گذشته ۵۳۶ خانواده مهاجر به کشور بازگشتند"),
+    ("fa", "۶۹ تن از منسوبین وزارت دفاع از آموزش‌های مسلکی نظامی فارغ شدند"),
+    ("fa", "نتانیاهو می‌گوید موضع خود را در مورد غزه، لبنان و سوریه تغییر نخواهد داد"),
+    ("ps", "د بشري مرستو ادارې وايي چې په راتلونکو میاشتو کې به له زرګونو کورنیو "
+           "سره مرسته وشي"),
+]
+
+
+def test_bad_breaks_detects_an_orphaned_particle():
+    """د `bad_breaks` واحد ازموینه — «د»/«په» د لاین په پای کې یتیم دي."""
+    from modules.design.text_render import bad_breaks
+
+    assert bad_breaks(["عمومي روغتون د", "جوړېدو چارې پیل شوې"], False) == 1
+    assert bad_breaks(["زېربناوو د په", "نښه کولو ګواښ کړی"], False) == 1
+    assert bad_breaks(["عمومي روغتون د جوړېدو", "چارې پیل شوې"], False) == 0
+    # وروستی لاین مات‌ځای نه لري، نو «د» پکې بې زیانه ده.
+    assert bad_breaks(["چارې پیل شوې د"], False) == 0
+    # انګلیسي معاف ده — د ادارې لاسي ډیزاین پخپله «... Return to» کاروي.
+    assert bad_breaks(["536 Returnee Families Return to", "Afghanistan"], True) == 0
+
+
+def test_title_never_orphans_a_binding_particle():
+    """⚠️ regression: «... روغتون د | جوړېدو ...» — لاین نیمایي کې بندېده.
+
+    پښتو/دري کې «د، په، له، تر، چې…» له **راتلونکي** ټکي سره تړلي دي. که د لاین
+    په پای کې پاتې شي، جمله ماته ښکاري — لاسي ډیزاین دا کار هیڅکله نه کوي.
+    """
+    from modules.design.text_render import bad_breaks
+    from modules.design.layout import LANGS
+
+    for code, title in _TIE_TITLES + _REAL_TITLES:
+        _size, lines, _widths, _bw = _title_fill(code, title)
+        eng = [x for x in LANGS if x["code"] == code][0]["is_english"]
+        assert bad_breaks(lines, eng) == 0, (
+            f"[{code}] بد مات‌ځای: {' | '.join(lines)}"
+        )
+
+
+def test_location_rule_uses_the_main_subject():
+    """⚠️ regression: «ایران د سیمې زېربناوې ګواښي» → World راته، باید Region وي.
+
+    زاړه قاعده وایه «خبر **یوازې** د ګاونډیو په اړه وي»، نو د سعودي/امارات/قطر د
+    نوم راتګ یې نړۍ ته اړاوه. اوس پرېکړه د خبر پر **اصلي محور** ده.
+    """
+    from modules import gemini
+
+    for prompt in (gemini.PROMPT_TEMPLATE, gemini.COMBINED_PROMPT):
+        assert "اصلي محور" in prompt, "د موقعیت قاعده باید پر اصلي محور ولاړه وي"
+        assert "مه شمېره" in prompt, "شالید/هدف هیوادونه باید ونه شمېرل شي"
+        assert "ایران" in prompt and "Region" in prompt
+        assert "یوازې د افغانستان د پولې ګاونډیو" not in prompt, "زړه قاعده پاتې ده"
 
 
 def test_news_title_never_has_a_wider_lower_line_on_real_titles():
