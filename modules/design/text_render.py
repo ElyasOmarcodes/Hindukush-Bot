@@ -480,15 +480,19 @@ def find_best_size(text: str, font_path: str, box: tuple, is_english: bool, dcfg
 
 def _balance_score(lines: list[str], size: int, target: int, font_path: str,
                    is_english: bool, box_w: int) -> tuple:
-    """د لاینونو کیفیت — کوچنی = ښه.  (سرغړونې، تش لاینونه، له ډیفالټ واټن، تشه)
+    """د لاینونو کیفیت — کوچنی = ښه.
 
-    ⚠️ ترتیب مهم دی. پخوا **تشه** د دویم ځای پر ځای د یوه پرله‌پسې عدد په توګه
-    وه، نو انتخاب تل تر ټولو لوی سایز ته ټوپ وهه (لوی فونټ = پراخ لاینونه =
-    لږه تشه) او متن غیرمسلکي لوی راته (۷۰ → ۱۰۴px).
+    ترتیب: (سرغړونې، بد مات‌ځایونه، تش لاینونه، تشه، له ډیفالټ واټن)
 
-    اوس تشه یوازې د یوه **حد** په توګه کار کوي: نا-وروستی لاین باید لږ تر لږه
-    ۸۰٪ ډک وي. له هغو انتخابونو چې دا شرط پوره کوي، **ډیفالټ ته نږدې** اخلو.
-    وروستی لاین معاف دی — طبیعي توګه لنډ وي، لکه لاسي ډیزاین («۹۳٪ + ۲۱٪»).
+    ⚠️ **ډکوالی تر «له ډیفالټ واټن» مخکې دی — خو یوازې د [normal_min، normal_max]
+    بند دننه.** دا توپیر مهم دی:
+      • پخوا بند تر ۱۰۷px پورې خلاص و، نو «ډکوالی لومړی» متن غیرمسلکي لوی کاوه.
+      • اوس بند ±۷ دی (۶۳–۷۷)، نو «ډکوالی لومړی» یوازې د لاسي ډیزاین بڼه راوړي:
+        پاسني لاینونه بشپړ ډک، وروستی لاین لنډ.
+
+    که ډکوالی د سایز پر بدلون سره ښه نشي، بیا **ډیفالټ ته نږدې** پرېکړه کوي.
+    تشه یوازې د **نا-وروستیو** لاینونو ده — وروستی لاین طبیعي توګه لنډ وي
+    («۹۹٪ + ۸۵٪ + ۲۰٪» لکه د ادارې لاسي ډیزاین).
     """
     font = get_font(font_path, size)
     widths = [text_width(font, ln, is_english) for ln in lines]
@@ -498,7 +502,7 @@ def _balance_score(lines: list[str], size: int, target: int, font_path: str,
     empties = sum(1 for f in fills if f < _MIN_LINE_FILL)
     gaps = [(1 - f) ** 2 for f in fills]
     return (violations, bad_breaks(lines, is_english), empties,
-            abs(size - target), round(sum(gaps) / len(gaps), 2))
+            round(sum(gaps) / len(gaps), 2), abs(size - target))
 
 
 def draw_title(canvas, text: str, font_path: str, box: tuple, is_english: bool, dcfg: DesignConfig) -> None:

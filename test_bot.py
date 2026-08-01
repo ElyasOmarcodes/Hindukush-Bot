@@ -931,14 +931,14 @@ def test_balance_score_compares_pixel_width_not_word_count():
     assert good[0] == 0
     assert good < bad
 
-    # (سرغړونې، بد مات‌ځایونه، تش لاینونه، له ډیفالټ واټن، تشه)
+    # (سرغړونې، بد مات‌ځایونه، تش لاینونه، تشه، له ډیفالټ واټن)
     # «... دفاع **از**» یو بد مات‌ځای دی — «از» له راتلونکي سره تړلی دی.
     assert bad[1] == 1 and good[1] == 0, "د لاین په پای کې «از» باید بد مات‌ځای وي"
 
     full = _balance_score([upper, lower], 70, 70, fp, False, 900)
     empty = _balance_score([upper, lower], 70, 70, fp, False, 3000)
     assert full[2] < empty[2], "پراخ باکس = تش لاین"
-    assert full[4] < empty[4], "پراخ باکس = ډیره تشه"
+    assert full[3] < empty[3], "پراخ باکس = ډیره تشه"
 
 
 def test_news_title_never_has_a_wider_lower_line():
@@ -2026,12 +2026,12 @@ def test_news_title_never_has_a_wider_lower_line_on_real_titles():
             )
 
 
-def _title_fill_at(code, title, size):
-    """په ټاکلي سایز کې (عرضونه، د باکس عرض) — که ځای نشي، None."""
+def _title_score_at(code, title, size):
+    """د `_balance_score` کیفیت-برخه (پرته له «له ډیفالټ واټن») — که ځای نشي، None."""
     from pathlib import Path as _P
     from modules.design.layout import LANGS
     from modules.design.text_render import (
-        descending_wrap, get_font, line_height, text_width,
+        _balance_score, descending_wrap, get_font, line_height,
     )
 
     d = load_config("config/settings.json").design
@@ -2041,8 +2041,8 @@ def _title_fill_at(code, title, size):
     lines = descending_wrap(title, fp, size, bw, lg["is_english"])
     if len(lines) * line_height(get_font(fp, size), d.title_line_gap) > bh:
         return None
-    font = get_font(fp, size)
-    return [text_width(font, ln, lg["is_english"]) for ln in lines], bw
+    return _balance_score(lines, size, d.title_target_size, fp,
+                          lg["is_english"], bw)[:4]
 
 
 def test_title_size_stays_at_the_default():
@@ -2052,8 +2052,6 @@ def test_title_size_stays_at_the_default():
     ټولو لوی سایز ته ټوپ وهه. اوس تشه یوازې یو **حد** دی (۸۰٪) او له هغو
     انتخابونو چې شرط پوره کوي، ډیفالټ ته نږدې اخیستل کیږي.
     """
-    from modules.design.text_render import _MIN_LINE_FILL
-
     d = load_config("config/settings.json").design
     for code, title in _REAL_TITLES + [
         ("ps", "د کابل په ښار کې چاودنه وشوه"),
@@ -2065,15 +2063,14 @@ def test_title_size_stays_at_the_default():
             f"[{code}] سایز {size} د [{d.title_normal_min}, {d.title_normal_max}] "
             f"بند څخه بهر دی: {title[:40]}"
         )
-        if abs(size - d.title_target_size) > 2:
-            # له ډیفالټ لرې تلل یوازې هغه وخت جواز لري چې پخپله ډیفالټ کې یو
-            # نا-وروستی لاین تش پاتې شي (لکه ۳ لاینه/۷۵٪ پرځای ۲ لاینه/۹۹٪).
-            at_target = _title_fill_at(code, title, d.title_target_size)
-            assert at_target is None or any(
-                w / at_target[1] < _MIN_LINE_FILL for w in at_target[0][:-1]
-            ), (
-                f"[{code}] سایز {size} له ډیفالټ ({d.title_target_size}) لرې دی "
-                f"بې لامله: {title[:40]}"
+        if size != d.title_target_size:
+            # له ډیفالټ خوځېدل یوازې هغه وخت جواز لري چې کیفیت یې **ریښتیا**
+            # ښه کړي (لږې سرغړونې/بد مات‌ځایونه/تش لاینونه/تشه).
+            here = _title_score_at(code, title, size)
+            at_target = _title_score_at(code, title, d.title_target_size)
+            assert at_target is None or here < at_target, (
+                f"[{code}] سایز {size} له ډیفالټ ({d.title_target_size}) خوځېدلی "
+                f"بې لامله: {here} vs {at_target} — {title[:40]}"
             )
 
 
