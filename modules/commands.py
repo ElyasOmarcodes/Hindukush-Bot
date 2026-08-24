@@ -52,7 +52,6 @@ _URGENT_LANG_STEP = {"ps": 2, "fa": 3, "en": 4}
 # ─────────────── د بوټ کیبورډ بټنې (منو) ───────────────
 # د دستورونو پر ځای ښکلې بټنې — چې غیر مسلکي کسان هم اسانه کار وکړي.
 # یادونه: ټلګرام د کیبورډ بټنو رنګ نه مني — نو د «سور» لپاره 🔴 ایموجي کاروو.
-BTN_CREATE = "🛠 جوړول"
 BTN_NEWS = "📰 خبر"
 BTN_URGENT = "🔴 عاجل"
 BTN_QUOTE = "💬 نقل قول"
@@ -63,27 +62,32 @@ BTN_CANCEL = "🔴 لغوه"
 
 # ټول د بټنو لیبلونه — چې monitor یې د پکیج محتوا ونه ګڼي.
 BUTTON_LABELS = [
-    BTN_CREATE, BTN_NEWS, BTN_URGENT, BTN_QUOTE,
+    BTN_NEWS, BTN_URGENT, BTN_QUOTE,
     BTN_BACK, BTN_COMPLETE, BTN_CLEAN, BTN_CANCEL,
 ]
 
 
 def _kb(rows: list[list[str]]) -> ReplyKeyboardMarkup:
+    """د بټنو کیبورډ جوړ کړه.
+
+    ⚠️ `is_persistent` **نه** ټاکو (یعنې false). که true وي، ټلګرام کیبورډ تل
+    ښکاره ساتي او د مبایل «بیرته» بټن یې نشي پټولی — نو کارونکی له چټ/ګروپ
+    څخه وځي. په false سره چلند نورمال کیږي: «بیرته» لومړی منو پټوي، بیا یې
+    دویم ځل چټ پریږدي. منو د کیبورډ د آیکن په وهلو بیا خلاصیږي.
+    """
     return ReplyKeyboardMarkup(
         [[KeyboardButton(b) for b in row] for row in rows],
         resize_keyboard=True,
-        is_persistent=True,
     )
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:
-    """اصلي منو — یوازې «جوړول»."""
-    return _kb([[BTN_CREATE]])
+    """اصلي منو — مستقیم د حالت انتخاب.
 
-
-def create_keyboard() -> ReplyKeyboardMarkup:
-    """د «جوړول» فرعي منو."""
-    return _kb([[BTN_NEWS, BTN_URGENT], [BTN_QUOTE], [BTN_BACK]])
+    ⚠️ پخوا یو «🛠 جوړول» بټن و چې دا منو یې خلاصوله — یو زیات ګام و او هر ځل
+    یې دوه اضافي پیغامونه جوړول. اوس حالتونه سمدلاسه دلته دي.
+    """
+    return _kb([[BTN_NEWS, BTN_URGENT], [BTN_QUOTE]])
 
 
 def active_keyboard() -> ReplyKeyboardMarkup:
@@ -119,7 +123,7 @@ def _missing_note(done) -> str | None:
 
 
 # د دورې د پای پیغام — کیبورډ یې راوړي. لنډ ساتل شوی دی.
-MENU_RESET_TEXT = "🛠 چمتو یم — د نوي پکیج لپاره «جوړول» ووهئ."
+MENU_RESET_TEXT = "🛠 چمتو یم — د نوي پکیج لپاره یو حالت وټاکئ."
 
 
 async def _restore_menu(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
@@ -227,7 +231,7 @@ async def gatekeeper(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """اصلي منو وښیه (د بوټ کیبورډ بټنې)."""
     await update.effective_message.reply_text(
-        "🤖 ښه راغلاست! د پیل لپاره «🛠 جوړول» ووهئ.",
+        "🤖 ښه راغلاست! یو حالت وټاکئ:",
         reply_markup=main_keyboard(),
     )
 
@@ -244,9 +248,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         _track(state, sent.message_id)     # د رباټ ځواب
         return sent
 
-    if text == BTN_CREATE:
-        await reply("یو انتخاب وکړئ:", reply_markup=create_keyboard())
-    elif text == BTN_NEWS:
+    if text == BTN_NEWS:
         state.reset()
         state.mode = "news"
         state.listening = True

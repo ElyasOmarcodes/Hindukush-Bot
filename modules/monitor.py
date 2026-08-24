@@ -15,7 +15,7 @@ from telegram import ReactionTypeEmoji, Update
 from telegram.ext import ContextTypes
 
 from .package import BotState, BufferItem, can_add
-from .utils import ensure_dirs
+from .utils import ensure_dirs, split_whatsapp
 
 logger = logging.getLogger("monitor")
 
@@ -72,17 +72,34 @@ async def react_ordered(context, state: BotState, chat_id: int, message_id: int,
 
 
 async def _add_text(context, state: BotState, msg) -> None:
-    ok, reason = can_add(state, "text")
-    if not ok:
-        logger.info("متن رد شو: %s", reason)
+    """متن بفر ته ور اضافه کړه — یو پیغام کیدای شي **څو راپورونه** ولري.
+
+    ⚠️ اداره کې څو اډمینان په واټساپ کې راپورونه لیکي، نو کارونکی دری واړه
+    یوځای کاپي کوي او په یوه ټلګرام پیغام کې یې لیږي. که د واټساپ سرلیکونه
+    («[۸/۲۴, ۲:۰۳ ب.ظ] نوم:») ولري، دلته یې جلا راپورونو ته بېلوو.
+    """
+    raw = msg.text or msg.caption or ""
+    parts = split_whatsapp(raw)
+    if len(parts) > 1:
+        logger.info("پیغام #%d کې %d راپورونه وموندل شول (واټساپ)", msg.message_id, len(parts))
+
+    last_index: int | None = None
+    for part in parts:
+        ok, reason = can_add(state, "text")
+        if not ok:
+            logger.info("متن رد شو: %s", reason)
+            break
+        last_index = len(state.buffer)
+        state.buffer.append(
+            BufferItem(type="text", message_id=msg.message_id, content=part)
+        )
+        logger.info("پیغام #%d → بفر (متن) — توکی %d", msg.message_id, last_index + 1)
+
+    if last_index is None:                 # هیڅ برخه ونه منل شوه
         await react(context, msg.chat_id, msg.message_id, state.config.reaction_reject)
         return
-    index = len(state.buffer)
-    state.buffer.append(
-        BufferItem(type="text", message_id=msg.message_id, content=msg.text or msg.caption or "")
-    )
-    logger.info("پیغام #%d → بفر (متن) — توکی %d", msg.message_id, index + 1)
-    await react_ordered(context, state, msg.chat_id, msg.message_id, index)
+    # یو ری‌اکشن بس دی — ټلګرام یوازې وروستی ساتي، نو د **اخري** توکي شمېره ښیو.
+    await react_ordered(context, state, msg.chat_id, msg.message_id, last_index)
 
 
 async def _add_image(context, state: BotState, msg) -> None:

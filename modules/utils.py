@@ -93,3 +93,53 @@ def setup_logging(log_file: str = "logs/bot.log") -> None:
     logging.getLogger("httpcore").setLevel(logging.WARNING)
     logging.getLogger("telegram").setLevel(logging.WARNING)
     logging.getLogger("apscheduler").setLevel(logging.WARNING)
+
+
+# ─────────────── د واټساپ د څو راپورونو بېلول ───────────────
+# ⚠️ اداره کې څو اډمینان په واټساپ کې راپورونه لیکي. کارونکی یې یوځای کاپي کوي
+# او په یوه ټلګرام پیغام کې لیږي. واټساپ هر راپور ته داسې سرلیک ورکوي:
+#     [۸/۲۴, ۲:۰۳ ب.ظ] ساجد عمر هندوکش ساده: پیغام…
+#     [24/08/2026, 2:03 PM] Sajid Omar: message…
+#     24/08/2026, 14:03 - Sajid Omar: message…
+# نو د سرلیکونو پر بنسټ متن جلا راپورونو ته بېلوو.
+
+# ⚠️ یوازې **دوه-اړخیز** (bidi) کنټرول حروف پاکوو — واټساپ یې د نېټې شاوخوا
+# اچوي. ZWNJ (‌) پاک **نه** کوو: هغه د پښتو/فارسي ریښتینی توری دی
+# («سیمه‌ییزو» ≠ «سیمهییزو»)، نو د راپور متن به یې خراب کړی وای.
+_BIDI_MARKS = "\u200e\u200f\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069\ufeff"
+_BIDI_RE = re.compile("[" + _BIDI_MARKS + "]")
+
+_WA_DIGITS = "0-9\u0660-\u0669\u06f0-\u06f9"          # لاتیني + عربي-هندي
+_WA_HEADER = re.compile(
+    r"(?:^|\n)[ \t]*"
+    r"(?:"
+    r"\[\s*[" + _WA_DIGITS + r"][^\]\n]{0,40}\]"        # [نېټه، وخت]
+    r"|[" + _WA_DIGITS + r"][" + _WA_DIGITS + r"/.:,\- ]{5,30}?\s+[-\u2013]"  # نېټه وخت -
+    r")"
+    r"[ \t]*[^\n:]{1,60}?\s*:[ \t]*"                    # لیږونکی:
+)
+
+
+def split_whatsapp(text: str) -> list[str]:
+    """یو پیغام څو راپورونو ته وبېله — که د واټساپ سرلیکونه ولري.
+
+    Split one pasted message into several reports when it carries WhatsApp
+    export headers. Returns the bodies with headers stripped; a text without
+    headers comes back unchanged as a single item.
+    """
+    if not text or not text.strip():
+        return []
+    clean = _BIDI_RE.sub("", text)
+    matches = list(_WA_HEADER.finditer(clean))
+    if not matches:
+        return [clean.strip()]
+    bodies: list[str] = []
+    head = clean[: matches[0].start()].strip()   # تر لومړي سرلیک مخکې متن
+    if head:
+        bodies.append(head)
+    for i, m in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(clean)
+        body = clean[m.end():end].strip()
+        if body:
+            bodies.append(body)
+    return bodies or [clean.strip()]

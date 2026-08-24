@@ -273,11 +273,34 @@ def test_source_prompt_has_new_rules():
 
 def test_menu_keyboards_build():
     from modules import commands
-    assert commands.BTN_CREATE in commands.BUTTON_LABELS
     # هرې منو باید جوړه شي (استثنا وا نه چوي).
     assert commands.main_keyboard().keyboard
-    assert commands.create_keyboard().keyboard
     assert commands.active_keyboard().keyboard
+    for label in commands.BUTTON_LABELS:
+        assert label.strip()
+
+
+def test_main_menu_has_no_create_step():
+    """⚠️ «🛠 جوړول» بټن لرې شو — حالتونه سمدلاسه په اصلي منو کې دي."""
+    from modules import commands
+    assert not hasattr(commands, "BTN_CREATE")
+    assert not hasattr(commands, "create_keyboard")
+    labels = [b.text for row in commands.main_keyboard().keyboard for b in row]
+    assert labels == [commands.BTN_NEWS, commands.BTN_URGENT, commands.BTN_QUOTE]
+    assert "جوړول" not in " ".join(commands.BUTTON_LABELS)
+    assert "جوړول" not in commands.MENU_RESET_TEXT
+
+
+def test_keyboard_is_not_persistent_so_back_can_hide_it():
+    """⚠️ `is_persistent=True` د مبایل د «بیرته» بټن کار خرابوه.
+
+    کیبورډ به تل ښکاره و، نو «بیرته» یې نه پټوله — کارونکی له ګروپ څخه وتلو.
+    اوس false دی: «بیرته» لومړی منو پټوي، بیا یې چټ پریږدي.
+    """
+    from modules import commands
+    for kb in (commands.main_keyboard(), commands.active_keyboard()):
+        assert not kb.is_persistent, "منو باید پټېدونکې وي"
+        assert kb.resize_keyboard
 
 
 def test_design_line_gap_and_quality():
@@ -2087,3 +2110,116 @@ def test_fill_headroom_is_zero_so_titles_do_not_balloon():
     """headroom باید ۰ وي — ډکوالی د wrap کار دی، نه د فونټ د لویولو."""
     d = load_config("config/settings.json").design
     assert d.title_fill_headroom == 0
+
+
+# ---------- د واټساپ د څو راپورونو بېلول ----------
+
+_WA_PASTE = """[۸/۲۴, ۲:۰۳ ب.ظ] ساجد عمر هندوکش ساده: په پنجشېر کې هېڅ سياسي بندي نشته
+
+د پنجشیر سیمه‌ییزو چارواکو ویلي، په دې ولایت کې د زندانیانو شمېر کم دی.
+[۸/۲۴, ۲:۰۳ ب.ظ] ساجد عمر هندوکش ساده: هیچ زندانی سیاسی در پنجشیر وجود ندارد
+
+مقام‌های محلی پنجشیر اعلام کرده‌اند که شمار زندانیان کم است.
+[۸/۲۴, ۲:۰۴ ب.ظ] ساجد عمر هندوکش ساده: No Political Prisoners in Panjshir
+
+Local officials in Panjshir have stated that the number of prisoners is low."""
+
+
+def test_split_whatsapp_splits_three_reports():
+    """درې واټساپ راپورونه چې په یوه پیغام کې کاپي شوي — درې برخې شي."""
+    from modules.utils import split_whatsapp
+    parts = split_whatsapp(_WA_PASTE)
+    assert len(parts) == 3
+    assert parts[0].startswith("په پنجشېر کې")
+    assert parts[1].startswith("هیچ زندانی سیاسی")
+    assert parts[2].startswith("No Political Prisoners")
+    # سرلیکونه نه پاتې کیږي.
+    assert all("ب.ظ" not in p and "ساجد عمر" not in p for p in parts)
+
+
+def test_split_whatsapp_keeps_zwnj():
+    """⚠️ ZWNJ (‌) د پښتو/فارسي ریښتینی توری دی — پاکېدل یې متن خرابوي."""
+    from modules.utils import split_whatsapp
+    parts = split_whatsapp(_WA_PASTE)
+    assert "سیمه‌ییزو" in parts[0], "ZWNJ ورک شو → «سیمهییزو»"
+    assert "مقام‌های" in parts[1]
+
+
+def test_split_whatsapp_handles_latin_formats():
+    """د واټساپ انګلیسي بڼې هم — د براکټ سره او بې براکټه."""
+    from modules.utils import split_whatsapp
+    assert split_whatsapp(
+        "[24/08/2026, 2:03 PM] Sajid: First body\n"
+        "[24/08/2026, 2:04 PM] Ali: Second body"
+    ) == ["First body", "Second body"]
+    assert split_whatsapp(
+        "24/08/2026, 14:03 - Sajid: A\n24/08/2026, 14:04 - Ali: B"
+    ) == ["A", "B"]
+
+
+def test_split_whatsapp_leaves_a_plain_report_alone():
+    """بې سرلیکه راپور باید ونه بېل شي — که دوه‌ټکي (:) هم ولري."""
+    from modules.utils import split_whatsapp
+    plain = "سرخط: دلته یو خبر\n\nمتن یې دا دی، او دویمه پراګراف."
+    assert split_whatsapp(plain) == [plain]
+    assert split_whatsapp("یو راپور") == ["یو راپور"]
+    assert split_whatsapp("   ") == []
+
+
+def test_one_pasted_message_fills_three_text_slots():
+    """د پای-تر-پای چک: یو پیغام → درې متني توکي په بفر کې."""
+    import asyncio
+    from modules import monitor
+
+    state = _state()
+    reacted = []
+
+    class _Msg:
+        text = _WA_PASTE
+        caption = None
+        chat_id = 5
+        message_id = 77
+
+    async def fake_react_ordered(context, st, chat_id, mid, index):
+        reacted.append(index)
+
+    async def fake_react(*a, **k):
+        reacted.append("reject")
+        return True
+
+    old_o, old_r = monitor.react_ordered, monitor.react
+    monitor.react_ordered, monitor.react = fake_react_ordered, fake_react
+    try:
+        asyncio.run(monitor._add_text(None, state, _Msg()))
+    finally:
+        monitor.react_ordered, monitor.react = old_o, old_r
+
+    assert state.counts() == (0, 3), "درې راپورونه باید بېل شوي وای"
+    # ټول د یوه پیغام دي، نو ریپلای یې هماغه پیغام ته کیږي.
+    assert {i.message_id for i in state.buffer} == {77}
+    assert reacted == [2], "یو ری‌اکشن — د اخري توکي شمېره"
+
+
+def test_extra_reports_beyond_the_limit_are_dropped_not_crashed():
+    """څلورم راپور د حد له امله نه منل کیږي — خو دری واړه پاتې کیږي."""
+    import asyncio
+    from modules import monitor
+
+    state = _state()
+
+    class _Msg:
+        text = _WA_PASTE + "\n[۸/۲۴, ۲:۰۵ ب.ظ] بل څوک: څلورم راپور"
+        caption = None
+        chat_id = 5
+        message_id = 78
+
+    async def noop(*a, **k):
+        return True
+
+    old_o, old_r = monitor.react_ordered, monitor.react
+    monitor.react_ordered, monitor.react = noop, noop
+    try:
+        asyncio.run(monitor._add_text(None, state, _Msg()))
+    finally:
+        monitor.react_ordered, monitor.react = old_o, old_r
+    assert state.counts() == (0, 3)
