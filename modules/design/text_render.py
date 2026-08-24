@@ -115,6 +115,16 @@ def wrap_text(text: str, font_path: str, size: int, max_w: int, is_english: bool
 _TARGET_SHRINK = 20
 # د لاین د پاتې تشې اعظمي حد (د باکس د عرض برخه) — تر دې زیاته تشه نه منو.
 _GAP_TOL = 0.02
+# ⚠️ خو یو ثابت سلنه کافي نه ده. کشیده یو **بشپړ توری** دی او له فونټ سره لویږي:
+#   ۴۵px → ۲.۵٪ د باکس، ۵۸px → ۳.۳٪، ۶۵px → ۳.۶٪.
+# نو پاتې تشه تل «تر یوې کشیدې کمه» وي — دا د جاسټیفای ریاضي کچه ده. که په
+# ۵۸px کې «تر ۲٪ کمه» وغواړو، دا یعنې «تر یوې کشیدې ښه» — یوازې په بخت سره
+# ممکنه. پایله دا شوه چې الګوریتم به تل هغه **کوچني** سایز ته ټوپ وهه چې تشه
+# یې تصادفاً د کشیدې پر مضرب لوېده — او د ادارې ملګري یې په حق شکایت کاوه چې
+# «د نقل قول متن تل تر معمول کوچنی وي».
+# ځکه حد اوس **د کشیدې په تناسب** هم بیانیږي: پاتې تشه باید تر درې-څلورمې
+# کشیدې کمه وي — یعنې «کشیدې خپل کار تر پایه کړی دی».
+_GAP_KASHIDA_FRACTION = 0.75
 # د wrap پر مهال د خامې (د کشیدې مخکې) تشې غوره سقف — DP یې ساتي که وسه یې وي.
 _RAW_GAP_CAP = 0.22
 # د سایز د ټاکلو پر مهال مطلق سقف: لاین باید تر کشیدې مخکې لږ تر لږه ۵۵٪ ډک وي.
@@ -230,10 +240,21 @@ def kashida_wrap(text: str, font_path: str, size: int, box_w: int,
     return out[::-1]
 
 
+def gap_tolerance(font_path: str, size: int, box_w: int) -> float:
+    """د پاتې تشې د زغم حد (px) — د باکس سلنه **یا** د کشیدې برخه، کومه چې لویه.
+
+    د کشیدې برخه ځکه ورزیاته شوه چې د جاسټیفای دانه له فونټ سره لویږي؛ پورته
+    د `_GAP_KASHIDA_FRACTION` یادښت وګوره.
+    """
+    return max(_GAP_TOL * box_w,
+               _GAP_KASHIDA_FRACTION * kashida_width(get_font(font_path, size)))
+
+
 def _is_clean(lines: list[str], font_path: str, size: int, box_w: int,
               is_english: bool, strict: bool = True) -> bool:
     """آیا دا سایز «پاک» دی — نه تشه پریږدي او نه زیاتې کشیدې غواړي؟"""
-    if worst_gap_after_kashida(lines, font_path, size, box_w, is_english) > _GAP_TOL * box_w:
+    gap = worst_gap_after_kashida(lines, font_path, size, box_w, is_english)
+    if gap > gap_tolerance(font_path, size, box_w):
         return False
     if not strict:
         return True

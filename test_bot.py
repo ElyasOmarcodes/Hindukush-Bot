@@ -1427,7 +1427,8 @@ def test_fit_to_box_minimises_gap_left_after_kashida():
     from pathlib import Path as _P
     from modules.design.layout import QUOTE_TITLE_BOX
     from modules.design.text_render import (
-        fit_to_box, get_font, line_height, worst_gap_after_kashida, wrap_text,
+        fit_to_box, gap_tolerance, get_font, line_height,
+        worst_gap_after_kashida, wrap_text,
     )
 
     d = load_config("config/settings.json").design
@@ -1441,14 +1442,21 @@ def test_fit_to_box_minimises_gap_left_after_kashida():
     big = wrap_text(_IMG_TEXT, fp, d.quote_title_size, bw, False)
     if len(big) * line_height(get_font(fp, d.quote_title_size), d.title_line_gap) <= bh:
         assert chosen <= worst_gap_after_kashida(big, fp, d.quote_title_size, bw, False)
-    assert chosen / bw < 0.02, f"پاتې تشه {100 * chosen / bw:.1f}٪ ده"
+    # حد = د باکس ۲٪ **یا** د کشیدې ¾ — کومه چې لویه. کشیده یو بشپړ توری دی،
+    # نو تر هغې کمه تشه ریاضي‌وار ناممکنه ده (وګوره `_GAP_KASHIDA_FRACTION`).
+    tol = gap_tolerance(fp, size, bw)
+    assert chosen <= tol, (
+        f"پاتې تشه {100 * chosen / bw:.1f}٪ ده (حد {100 * tol / bw:.1f}٪)"
+    )
 
 
 def test_no_line_is_left_completely_unjustified():
     """هیڅ نا-وروستی لاین باید بې کشیدې لویه تشه ونه لري."""
     from pathlib import Path as _P
     from modules.design.layout import QUOTE_TITLE_BOX
-    from modules.design.text_render import fit_to_box, get_font, text_width
+    from modules.design.text_render import (
+        fit_to_box, gap_tolerance, get_font, text_width,
+    )
     from modules.design.justify import justify_line
 
     d = load_config("config/settings.json").design
@@ -1457,10 +1465,11 @@ def test_no_line_is_left_completely_unjustified():
     size, lines = fit_to_box(_IMG_TEXT, fp, bw, bh, d.title_line_gap,
                              d.quote_title_size, d.title_abs_min, False)
     font = get_font(fp, size)
+    tol = gap_tolerance(fp, size, bw)
     for i, ln in enumerate(lines[:-1]):
         filled = justify_line(ln, lambda t: text_width(font, t, False), bw, seed=i)
         gap = bw - text_width(font, filled, False)
-        assert gap / bw < 0.02, f"لاین {i} کې {100 * gap / bw:.1f}٪ تشه پاتې ده"
+        assert gap <= tol, f"لاین {i} کې {100 * gap / bw:.1f}٪ تشه پاتې ده"
 
 
 # ---------- د نقل قول د متن اندازه (د ادارې شکایت: «متن ډیر کوچنی دی») ----------
@@ -1541,14 +1550,34 @@ def test_long_quote_is_not_shrunk_to_a_tiny_size():
         assert size >= 52, f"{size}px ډیر کوچنی دی: {text[:30]}"
 
 
-def test_quote_lines_still_have_no_gap_after_the_size_bump():
-    """د سایز لوړول باید زموږ د «۱٪ تشه هم نه» قانون مات نه کړي."""
-    from modules.design.text_render import worst_gap_after_kashida
+def test_quote_lines_have_no_more_gap_than_kashida_allows():
+    """پاتې تشه باید تر هغه حد کمه وي چې **کشیده یې ډکولی شي**.
+
+    ⚠️ مطلق صفر ناممکن دی: کشیده یو بشپړ توری دی (په ۶۵px کې ~۲۰px = ۳.۶٪ د
+    باکس)، نو پاتې تشه تل تر یوې کشیدې کمه وي — لږه یې نشو کولی. حد = د باکس
+    ۲٪ **یا** د کشیدې ¾ (کومه چې لویه)، یعنې «کشیدې خپل کار تر پایه کړی دی».
+    """
+    from modules.design.text_render import gap_tolerance, worst_gap_after_kashida
 
     for text in _QUOTE_SAMPLES:
         size, lines, fp, bw, _bh, _d = _quote_fit(text)
         gap = worst_gap_after_kashida(lines, fp, size, bw, False)
-        assert gap / bw < 0.02, f"{100 * gap / bw:.1f}٪ تشه پاتې ده: {text[:30]}"
+        tol = gap_tolerance(fp, size, bw)
+        assert gap <= tol, (
+            f"{100 * gap / bw:.1f}٪ تشه پاتې ده (حد {100 * tol / bw:.1f}٪): {text[:30]}"
+        )
+
+
+def test_quote_is_no_longer_forced_small_by_a_fixed_gap_rule():
+    """⚠️ regression: ثابت ۲٪ حد نقل قول تل کوچني سایز ته اړاوه.
+
+    «ما اطمینان…» په ۵۸px کې ښه ځایېده (تشه ۲.۴٪ = تر یوې کشیدې ښه)، خو ثابت
+    ۲٪ یې ردوله، نو الګوریتم ۵۴px ته ښکته کېده. د ادارې ملګري یې شکایت کاوه.
+    """
+    for text in _QUOTE_SAMPLES:
+        size, _lines, _fp, _bw, _bh, d = _quote_fit(text)
+        assert size >= 56, f"{size}px لا هم کوچنی دی: {text[:34]}"
+        assert size <= d.quote_title_size + d.quote_fill_headroom
 
 
 def test_kashida_wrap_beats_plain_wrap_on_leftover_gap():
