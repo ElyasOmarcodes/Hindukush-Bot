@@ -117,8 +117,10 @@ def build_application(config: Config) -> Application:
 
     # ---- د بوټ کیبورډ بټنې — باید له monitor مخکې ثبت شي چې د بټنو متن
     #      د پکیج محتوا ونه ګڼل شي (یو ګروپ کې لومړی سمون کوونکی چلیږي).
+    # ⚠️ `filters.Text(...)` **دقیق** سمون غواړي، خو د «بشپړول» بټن اوس د محتوا
+    # شمېره هم لري («✅ بشپړول | ۲»). نو خپل فلټر کاروو چې تاړی له پامه غورځوي.
     app.add_handler(MessageHandler(
-        chat_filter & filters.Text(commands.BUTTON_LABELS),
+        chat_filter & commands.BUTTON_FILTER,
         commands.on_button,
     ))
 

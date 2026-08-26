@@ -2216,12 +2216,17 @@ def test_one_pasted_message_fills_three_text_slots():
         reacted.append("reject")
         return True
 
-    old_o, old_r = monitor.react_ordered, monitor.react
+    async def no_refresh(*a, **k):
+        return None
+
+    old_o, old_r, old_f = monitor.react_ordered, monitor.react, monitor.refresh_count
     monitor.react_ordered, monitor.react = fake_react_ordered, fake_react
+    monitor.refresh_count = no_refresh
     try:
         asyncio.run(monitor._add_text(None, state, _Msg()))
     finally:
         monitor.react_ordered, monitor.react = old_o, old_r
+        monitor.refresh_count = old_f
 
     assert state.counts() == (0, 3), "درې راپورونه باید بېل شوي وای"
     # ټول د یوه پیغام دي، نو ریپلای یې هماغه پیغام ته کیږي.
@@ -2245,10 +2250,103 @@ def test_extra_reports_beyond_the_limit_are_dropped_not_crashed():
     async def noop(*a, **k):
         return True
 
-    old_o, old_r = monitor.react_ordered, monitor.react
-    monitor.react_ordered, monitor.react = noop, noop
+    old_o, old_r, old_f = monitor.react_ordered, monitor.react, monitor.refresh_count
+    monitor.react_ordered = monitor.react = monitor.refresh_count = noop
     try:
         asyncio.run(monitor._add_text(None, state, _Msg()))
     finally:
         monitor.react_ordered, monitor.react = old_o, old_r
+        monitor.refresh_count = old_f
     assert state.counts() == (0, 3)
+
+
+# ---------- د تایید ګام لرې کول + په بټن کې شمېره ----------
+
+def test_no_confirmation_step_remains():
+    """⚠️ «📦 د پکیج خلاصه» + «✅ تایید / ❌ لغوه» ګام لرې شو."""
+    from pathlib import Path as _P
+    from modules import commands
+    src = _P("modules/commands.py").read_text(encoding="utf-8")
+    assert "cmp_confirm" not in src and "cmp_cancel" not in src
+    assert "InlineKeyboardMarkup" not in src, "شیشه‌یي کیبورډ نور نه کارول کیږي"
+    assert "تایید کوئ چې پروسس پیل شي" not in src
+    assert commands.cmd_cmp.__doc__ and "سمدلاسه" in commands.cmd_cmp.__doc__
+
+
+def test_complete_button_shows_the_item_count():
+    """«✅ بشپړول | ۲» — بټن د پکیج د محتوا شمېره ښیي."""
+    from modules import commands
+    assert commands.complete_label(0).endswith("۰")
+    assert commands.complete_label(3).endswith("۳")
+    labels = [b.text for row in commands.active_keyboard(2).keyboard for b in row]
+    assert labels[0] == commands.complete_label(2)
+    assert commands.BTN_COMPLETE in labels[0]
+
+
+def test_button_match_ignores_the_count_suffix():
+    """د شمېرې تاړی باید د بټن پېژندنه ونه ماتوي."""
+    from modules import commands
+    assert commands.match_button("✅ بشپړول | ۳") == commands.BTN_COMPLETE
+    assert commands.match_button("✅ بشپړول") == commands.BTN_COMPLETE
+    assert commands.match_button("📰 خبر") == commands.BTN_NEWS
+    assert commands.match_button("سلام ټولو ته") is None
+    # د واقعي راپور متن باید بټن ونه ګڼل شي (نه‌نو پکیج ته نه ورځي).
+    assert commands.match_button("د زابل په ولسوالۍ کې روغتون جوړ شو") is None
+
+
+def test_button_filter_accepts_the_counted_label():
+    """د `filters.Text` پرځای زموږ فلټر — تاړي سره هم سمون کوي."""
+    from modules import commands
+
+    class _M:
+        text = "✅ بشپړول | ۴"
+
+    class _Other:
+        text = "یو عادي راپور"
+
+    assert commands.BUTTON_FILTER.filter(_M())
+    assert not commands.BUTTON_FILTER.filter(_Other())
+
+
+def test_refresh_count_sends_new_then_deletes_old():
+    """⚠️ ترتیب حیاتي دی: لومړی نوی ولیږه، بیا زوړ ړنګ کړه.
+
+    د پیغام ړنګول خپل ریپلای-کیبورډ هم بېرته اخلي، نو که لومړی زوړ ړنګ کړو،
+    منو به یوه شیبه ورکه شي.
+    """
+    import asyncio
+    from modules import commands
+    from modules.package import BufferItem
+
+    order = []
+
+    class _Bot:
+        async def send_message(self, chat_id, text, reply_markup=None, **kw):
+            order.append(("send", text, reply_markup))
+
+            class _S:
+                message_id = 999
+            return _S()
+
+        async def delete_message(self, chat_id, message_id):
+            order.append(("delete", message_id))
+
+    state = _state()
+    state.listening = True
+    state.count_msg_id = 500
+    state.buffer.append(BufferItem(type="text", message_id=1, content="یو"))
+    state.buffer.append(BufferItem(type="text", message_id=2, content="دوه"))
+
+    class _Ctx:
+        bot = _Bot()
+
+        class application:
+            bot_data = {"state": state}
+
+    asyncio.run(commands.refresh_count(_Ctx(), 42))
+    assert [o[0] for o in order] == ["send", "delete"], "ترتیب ناسم دی"
+    assert order[1][1] == 500, "زوړ پیغام باید ړنګ شي"
+    assert state.count_msg_id == 999
+    labels = [b.text for row in order[0][2].keyboard for b in row]
+    assert labels[0] == commands.complete_label(2)
+    assert 999 in state.chatter, "د دورې په پای کې باید ړنګ شي"

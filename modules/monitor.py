@@ -14,6 +14,7 @@ from pathlib import Path
 from telegram import ReactionTypeEmoji, Update
 from telegram.ext import ContextTypes
 
+from .commands import refresh_count
 from .package import BotState, BufferItem, can_add
 from .utils import ensure_dirs, split_whatsapp
 
@@ -100,6 +101,7 @@ async def _add_text(context, state: BotState, msg) -> None:
         return
     # یو ری‌اکشن بس دی — ټلګرام یوازې وروستی ساتي، نو د **اخري** توکي شمېره ښیو.
     await react_ordered(context, state, msg.chat_id, msg.message_id, last_index)
+    await refresh_count(context, msg.chat_id)
 
 
 async def _add_image(context, state: BotState, msg) -> None:
@@ -129,6 +131,7 @@ async def _add_image(context, state: BotState, msg) -> None:
     )
     logger.info("پیغام #%d → بفر (انځور) — توکی %d", msg.message_id, index + 1)
     await react_ordered(context, state, msg.chat_id, msg.message_id, index)
+    await refresh_count(context, msg.chat_id)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

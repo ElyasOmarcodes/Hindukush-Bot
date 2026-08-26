@@ -51,6 +51,10 @@ class BotState:
     chatter: list[int] = field(default_factory=list)
     # د وروستي «منو» پیغام ID — د reset سره **نه** پاکیږي (کیبورډ یې راوړی).
     menu_msg_id: int | None = None
+    # د وروستي «شمېره» پیغام ID — هغه چې د «✅ بشپړول | ۲» بټن یې راوړی. هر نوی
+    # توکی یې تازه کوي (نوی لیږو، زوړ ړنګوو). لکه `menu_msg_id`، د `reset` سره
+    # **نه** پاکیږي — نه‌نو زوړ پیغام به بې-څښتنه پاتې شي.
+    count_msg_id: int | None = None
 
     def reset(self) -> None:
         """د دورې وروسته بشپړ پاکول.  Full reset after a cycle."""

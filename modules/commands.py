@@ -14,15 +14,13 @@ import time
 from pathlib import Path
 
 from telegram import (
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
     InputMediaDocument,
     KeyboardButton,
     ReplyKeyboardMarkup,
     Update,
 )
 from telegram.error import RetryAfter
-from telegram.ext import ApplicationHandlerStop, ContextTypes
+from telegram.ext import ApplicationHandlerStop, ContextTypes, filters
 
 from . import funny, gemini
 from .design import quote as design_quote
@@ -66,6 +64,34 @@ BUTTON_LABELS = [
     BTN_BACK, BTN_COMPLETE, BTN_CLEAN, BTN_CANCEL,
 ]
 
+# د «بشپړول» بټن د محتوا شمېره ښیي: «✅ بشپړول | ۲». نو راغلی متن **دقیق**
+# سمون نه لري — دلته یې کینونیکل بټن ته اړوو.
+_COUNT_SEP = " | "
+
+
+def complete_label(count: int) -> str:
+    """د «بشپړول» بټن متن — د پکیج د محتوا شمېرې سره."""
+    return f"{BTN_COMPLETE}{_COUNT_SEP}{fa_digits(count)}"
+
+
+def match_button(text: str | None) -> str | None:
+    """راغلی متن کوم بټن دی؟ (د شمېرې-تاړی له پامه غورځوي) — نه‌نو None."""
+    t = (text or "").strip()
+    for label in BUTTON_LABELS:
+        if t == label or t.startswith(label + _COUNT_SEP):
+            return label
+    return None
+
+
+class _ButtonFilter(filters.MessageFilter):
+    """د منو بټنې — د «✅ بشپړول | ۲» ډوله شمېرې-تاړي سره هم سمون کوي."""
+
+    def filter(self, message) -> bool:
+        return match_button(message.text) is not None
+
+
+BUTTON_FILTER = _ButtonFilter()
+
 
 def _kb(rows: list[list[str]]) -> ReplyKeyboardMarkup:
     """د بټنو کیبورډ جوړ کړه.
@@ -90,9 +116,40 @@ def main_keyboard() -> ReplyKeyboardMarkup:
     return _kb([[BTN_NEWS, BTN_URGENT], [BTN_QUOTE]])
 
 
-def active_keyboard() -> ReplyKeyboardMarkup:
-    """د «خبر» فعال حالت منو."""
-    return _kb([[BTN_COMPLETE], [BTN_CLEAN, BTN_CANCEL], [BTN_BACK]])
+def active_keyboard(count: int = 0) -> ReplyKeyboardMarkup:
+    """د فعال حالت منو — «بشپړول» بټن د محتوا شمېره ښیي."""
+    return _kb([[complete_label(count)], [BTN_CLEAN, BTN_CANCEL], [BTN_BACK]])
+
+
+async def refresh_count(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None:
+    """د «بشپړول» بټن کې شمېره تازه کړه (کله چې نوی توکی راشي).
+
+    ⚠️ ټلګرام د **ریپلای-کیبورډ** بټنې نشي ایډیټ کولی — یوازې inline کیبورډ
+    ایډیټ کیږي. نو نوی پیغام لیږو (چې نوی کیبورډ راوړي) او **بیا** زوړ ړنګوو.
+    ترتیب حیاتي دی: د پیغام ړنګول خپل کیبورډ هم بېرته اخلي، نو که لومړی زوړ
+    ړنګ کړو، منو به ورکه شي.
+    """
+    state = _state(context)
+    if not state.listening or state.processing:
+        return
+    count = len(state.buffer)
+    old_id = state.count_msg_id
+    try:
+        m = await context.bot.send_message(
+            chat_id,
+            f"📦 په پکیج کې: {fa_digits(count)}/{fa_digits(state.config.max_items)}",
+            reply_markup=active_keyboard(count),
+        )
+    except Exception as err:  # noqa: BLE001 - د شمېرې تازه کول حیاتي نه دي
+        logger.debug("د شمېرې تازه کول: %s", err)
+        return
+    state.count_msg_id = m.message_id
+    _track(state, m.message_id)
+    if old_id:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=old_id)
+        except Exception:  # noqa: BLE001
+            pass
 
 
 # د ژبو پښتو نومونه — د «کومه ژبه ونه لیږل شوه» خبرتیا لپاره.
@@ -143,6 +200,7 @@ async def _restore_menu(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
             chat_id, text or MENU_RESET_TEXT, reply_markup=main_keyboard()
         )
         state.menu_msg_id = m.message_id
+        state.count_msg_id = None      # شمېرې-کیبورډ نور نشته
     except Exception as err:  # noqa: BLE001 - منو بیا ټاکل حیاتي نه دي
         logger.debug("د منو بیا ټاکل: %s", err)
         return
@@ -239,7 +297,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """د بوټ کیبورډ بټنو اداره — د دستورونو پر ځای."""
     msg = update.effective_message
-    text = (msg.text or "").strip()
+    text = match_button(msg.text) or (msg.text or "").strip()
     state = _state(context)
     _track(state, msg.message_id)          # د کارونکي بټن-پیغام
 
@@ -255,7 +313,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.info("د خبر حالت فعال شو (بټن)")
         await reply(
             "📰 د خبر حالت فعال شو — اوس انځور او متنونه ولیږئ، بیا «✅ بشپړول» ووهئ.",
-            reply_markup=active_keyboard(),
+            reply_markup=active_keyboard(0),
         )
     elif text == BTN_URGENT:
         state.reset()
@@ -264,7 +322,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.info("د عاجل حالت فعال شو (بټن)")
         await reply(
             "🔴 د عاجل حالت فعال شو — یوازې تر ۳ متني راپورونه ولیږئ (بې انځوره)، بیا «✅ بشپړول» ووهئ.",
-            reply_markup=active_keyboard(),
+            reply_markup=active_keyboard(0),
         )
     elif text == BTN_QUOTE:
         state.reset()
@@ -273,7 +331,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.info("د نقل قول حالت فعال شو (بټن)")
         await reply(
             "💬 د نقل قول حالت فعال شو — د شخص انځور + تر ۳ راپورونه ولیږئ، بیا «✅ بشپړول» ووهئ.",
-            reply_markup=active_keyboard(),
+            reply_markup=active_keyboard(0),
         )
     elif text == BTN_BACK:
         state.reset()
@@ -361,79 +419,84 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.effective_message.reply_text("\n".join(lines) + quota_line)
 
 
-async def cmd_clean(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def _clear_buffer(update: Update, context: ContextTypes.DEFAULT_TYPE,
+                       body: str) -> None:
+    """بفر پاک کړه او د «بشپړول» بټن شمېره بېرته ۰ ته وګرځوه."""
     state = _state(context)
+    old_id = state.count_msg_id
     state.reset()
+    sent = await update.effective_message.reply_text(
+        body, reply_markup=active_keyboard(0) if state.listening else None
+    )
+    _track(state, sent.message_id)
+    if state.listening:
+        state.count_msg_id = sent.message_id
+        if old_id and old_id != sent.message_id:
+            try:
+                await context.bot.delete_message(
+                    chat_id=update.effective_chat.id, message_id=old_id)
+            except Exception:  # noqa: BLE001
+                pass
+
+
+async def cmd_clean(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info("بفر پاک شو (/clean)")
-    await update.effective_message.reply_text(f"{state.config.reaction_clean} بفر پاک شو.")
+    await _clear_buffer(update, context,
+                        f"{_state(context).config.reaction_clean} بفر پاک شو.")
 
 
 async def cmd_cnl(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    state = _state(context)
-    state.reset()
     logger.info("عملیات لغوه شو (/cnl)")
-    await update.effective_message.reply_text(f"{state.config.reaction_reject} عملیات لغوه شو، بفر پاک شو.")
+    await _clear_buffer(update, context,
+                        f"{_state(context).config.reaction_reject} عملیات لغوه شو، بفر پاک شو.")
 
 
 async def cmd_cmp(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """د بفر خلاصه وښیه او د تایید شیشه‌یي بټن ورکړه."""
+    """پکیج **سمدلاسه** پروسس کړه.
+
+    ⚠️ پخوا دلته یو «📦 د پکیج خلاصه» پیغام او شیشه‌یي «✅ تایید / ❌ لغوه»
+    بټنې وې. کارونکي یې دوه ځله وهل غوښتل، حال دا چې «✅ بشپړول» پخپله د
+    تایید کار کوي — نو هغه ګام لرې شو.
+    """
     state = _state(context)
     if not _is_authorized(state, update):
         return
+    msg = update.effective_message
+
+    async def warn(body: str) -> None:
+        sent = await msg.reply_text(body)
+        _track(state, sent.message_id)
+
     if state.processing:
-        await update.effective_message.reply_text("⏳ یو پروسس دمخه روان دی، صبر وکړئ.")
+        await warn("⏳ یو پروسس دمخه روان دی، صبر وکړئ.")
         return
     if not state.buffer:
-        await update.effective_message.reply_text("⚠️ بفر خالي دی — لومړی محتوا ولیږئ.")
+        await warn("⚠️ بفر خالي دی — لومړی محتوا ولیږئ.")
+        return
+    errors = validate_package(state)
+    if errors:
+        await warn("⚠️ د اعتبار ستونزه:\n- " + "\n- ".join(errors))
         return
 
-    imgs, txts = state.counts()
-    text = (
-        "📦 *د پکیج خلاصه*\n\n"
-        f"🖼 انځورونه: *{imgs}*\n"
-        f"📝 متنونه: *{txts}*\n"
-        f"📊 ټول توکي: *{len(state.buffer)}/{state.config.max_items}*\n\n"
-        "تایید کوئ چې پروسس پیل شي؟"
-    )
-    keyboard = InlineKeyboardMarkup([[
-        InlineKeyboardButton("✅ تایید — پیل کړه", callback_data="cmp_confirm"),
-        InlineKeyboardButton("❌ لغوه", callback_data="cmp_cancel"),
-    ]])
-    await update.effective_message.reply_text(text, reply_markup=keyboard, parse_mode="Markdown")
+    logger.info("پکیج پیل شو (بې د تایید ګام) — %d توکي", len(state.buffer))
+    await run_pipeline(context, msg.chat_id)
 
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """د شیشه‌یي بټن ځواب — تایید یا لغوه."""
+    """د شیشه‌یي بټنو ځواب.
+
+    ⚠️ د تایید ګام لرې شو، نو نوې شیشه‌یي بټنې نه جوړیږو. دا اداره-کوونکی
+    یوازې د **زړو** پیغامونو لپاره پاتې دی چې لا په چټ کې وي — نه‌نو بټن به
+    تل «loading» پاتې شي.
+    """
     q = update.callback_query
-    await q.answer()  # ⚠️ حتماً — که نه، بټن "loading" پاتې کیږي
-    state = _state(context)
-
-    if q.data == "cmp_cancel":
-        await q.edit_message_text("❌ لغوه شو.")
+    if not q:
         return
-
-    if q.data == "cmp_confirm":
-        if state.processing:
-            await q.edit_message_text("⏳ یو پروسس دمخه روان دی.")
-            return
-        errors = validate_package(state)
-        if errors:
-            text = "⚠️ د اعتبار ستونزه:\n- " + "\n- ".join(errors)
-            try:
-                await q.edit_message_text(text)
-            except Exception:  # noqa: BLE001 - پیغام ښایي دمخه ړنګ شوی وي
-                await context.bot.send_message(q.message.chat_id, text)
-            return
-        # د «پکیج خلاصه» پیغام بشپړ ړنګ کړه — چټ پاک پاتې شي.
-        chat_id = q.message.chat_id
-        try:
-            await q.delete_message()
-        except Exception:  # noqa: BLE001 - ړنګول ناکام؛ لږ تر لږه بټنې لرې کړه
-            try:
-                await q.edit_message_reply_markup(reply_markup=None)
-            except Exception:  # noqa: BLE001
-                pass
-        await run_pipeline(context, chat_id)
+    await q.answer()
+    try:
+        await q.edit_message_reply_markup(reply_markup=None)
+    except Exception:  # noqa: BLE001 - پیغام ښایي دمخه ړنګ شوی وي
+        pass
 
 
 async def _render_designs(context, data: dict, news_image, pkg_dir: Path, state: BotState, prog: Progress) -> list[Path]:
