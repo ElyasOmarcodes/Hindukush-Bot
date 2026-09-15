@@ -965,10 +965,16 @@ def test_balance_score_compares_pixel_width_not_word_count():
 
 
 def test_news_title_never_has_a_wider_lower_line():
-    """د خبر عنوان: هیڅ ښکتنی لاین باید تر پاسني پراخ نشي (۱۰۰٪)."""
+    """د خبر عنوان: ښکتنی لاین باید تر پاسني **د پام وړ** پراخ نشي.
+
+    ⚠️ زغم (`_DESC_TOL`) ورکوو ځکه د ادارې خپلې لاسي نمونې ۹۷→۱۰۰، ۹۳→۹۸ او
+    ۹۰→۹۹ لري. کلک قانون هغه ښکلي ډیزاینونه منع کول.
+    """
     from pathlib import Path as _P
     from modules.design.layout import LANGS
-    from modules.design.text_render import find_best_size, get_font, text_width
+    from modules.design.text_render import (
+        _DESC_TOL, find_best_size, get_font, text_width,
+    )
 
     d = load_config("config/settings.json").design
     fp = str(_P(d.fonts_dir) / d.title_font)
@@ -981,10 +987,12 @@ def test_news_title_never_has_a_wider_lower_line():
     ]:
         size, lines = find_best_size(title, fp, box, False, d)
         font = get_font(fp, size)
+        bw = box[2]
         w = [text_width(font, ln, False) for ln in lines]
         for i in range(len(w) - 1):
-            assert w[i] >= w[i + 1] - 0.5, (
-                f"لاین {i + 1} ({w[i + 1]:.0f}px) تر {i} ({w[i]:.0f}px) پراخ دی — {title[:30]}"
+            assert w[i] >= w[i + 1] - _DESC_TOL * bw, (
+                f"لاین {i + 1} ({w[i + 1]:.0f}px) تر {i} ({w[i]:.0f}px) د پام وړ "
+                f"پراخ دی — {title[:30]}"
             )
 
 
@@ -2069,76 +2077,158 @@ def test_location_rule_uses_the_main_subject():
 
 
 def test_news_title_never_has_a_wider_lower_line_on_real_titles():
-    """قانون: هیڅ ښکتنی لاین تر پاسني پراخ نه دی — پر ټولو ریښتینو عنوانونو."""
+    """ښکتنی لاین تر پاسني د پام وړ پراخ نه دی — پر ټولو ریښتینو عنوانونو."""
+    from modules.design.text_render import _DESC_TOL
     for code, title in _REAL_TITLES:
-        _, _, widths, _ = _title_fill(code, title)
+        _, _, widths, bw = _title_fill(code, title)
         for i in range(len(widths) - 1):
-            assert widths[i] >= widths[i + 1] - 0.5, (
-                f"[{code}] لاین {i + 1} تر {i} پراخ دی — {title[:40]}"
+            assert widths[i] >= widths[i + 1] - _DESC_TOL * bw, (
+                f"[{code}] لاین {i + 1} تر {i} د پام وړ پراخ دی — {title[:40]}"
             )
 
 
-def _title_score_at(code, title, size):
-    """د `_balance_score` کیفیت-برخه (پرته له «له ډیفالټ واټن») — که ځای نشي، None."""
+# ═══════════ د ادارې د ۶ لاسي نمونو معیار (د حقیقت سرچینه) ═══════════
+#
+# دا شپږ جوړې (لاسي ↔ رباټ) کارونکي راولیږلې. له لاسي نمونو څخه دا قانون
+# راووت او په کوډ کې پلی شو:
+#
+#   #  سایز  لاینه  ډکوالی            نا-وروستي لاینونه
+#   ۱   ۶۹     ۲    ۹۷/۱۰۰            ۹۷
+#   ۲   ۷۸     ۳    ۹۹/۹۹/۹           ۹۹، ۹۹
+#   ۳   ۸۴     ۳    ۹۳/۹۸/۳۰          ۹۳، ۹۸
+#   ۴   ۸۰     ۲    ۹۹/۹۵             ۹۹
+#   ۵   ۵۴     ۳    ۱۰۰/۱۰۰/۸۶        ۱۰۰، ۱۰۰
+#   ۶   ۷۳     ۳    ۹۰/۹۰/۹۹          ۹۰، ۹۰
+#
+# ⇒ هر نا-وروستی لاین **تل** ≥۹۰٪ ډک؛ وروستی لاین هیڅ حد نلري (۹٪ هم سم دی)؛
+#   سایز ۵۴–۸۴ خوځېږي، نو «ثابت ډیفالټ» قانون نه دی — **ډکوالی قانون دی**.
+
+_HAND_DESIGNS = [
+    (1, True, 69, ["57-Year Feud Between Two Families in",
+                   "Khost Resolved Through Reconciliation"]),
+    (2, False, 78, ["ترامپ از زلینسکی خواسته است حملات",
+                    "به پالایشگاه‌های دیزل روسیه را متوقف",
+                    "کند"]),
+    (3, True, 84, ["192 Afghan Families Return to",
+                   "Afghanistan Through Four Land",
+                   "Crossings"]),
+    (4, False, 80, ["مقام‌های افغان و ترکمن درباره روابط و",
+                    "همکاری‌های سرحدی گفت‌وگو کردند"]),
+    (5, True, 54, ["The Commander of the Khan Younis Brigade of the",
+                   "Al-Qassam Brigades, Muhammad Al-Yazouri, Has",
+                   "Been Martyred in an Israeli Regime Aattack"]),
+    (6, True, 73, ["Minister for Refugees and UNHCR",
+                   "Representative Discuss Efforts to",
+                   "Address Afghan Refugees' Problems"]),
+]
+
+
+def _hand_box(eng):
+    from modules.design.layout import _TITLE_BOX_EN, _TITLE_BOX_RTL
+    return _TITLE_BOX_EN if eng else _TITLE_BOX_RTL
+
+
+def test_bot_reproduces_all_six_hand_designs():
+    """⚠️ د معیار ازموینه: رباټ باید **عین** سایز او عین مات‌ځایونه جوړ کړي.
+
+    که دا ازموینه ماته شي، یعنې د لاینونو قانون بیا له لاسي ډیزاین سره توپیر
+    کوي — هماغه شکایت چې د ادارې ملګري یې کوي.
+    """
     from pathlib import Path as _P
-    from modules.design.layout import LANGS
+    from modules.design.text_render import find_best_size
+
+    d = load_config("config/settings.json").design
+    fp = str(_P(d.fonts_dir) / d.title_font)
+    for n, eng, size, lines in _HAND_DESIGNS:
+        got_size, got_lines = find_best_size(" ".join(lines), fp, _hand_box(eng), eng, d)
+        assert got_size == size, f"نمونه {n}: سایز {got_size} ≠ لاسي {size}"
+        assert got_lines == lines, (
+            f"نمونه {n}: مات‌ځایونه توپیر لري\n  رباټ: {got_lines}\n  لاسي: {lines}"
+        )
+
+
+def test_every_non_last_line_is_at_least_ninety_percent_full():
+    """د لاسي ډیزاین اصلي قانون — نا-وروستی لاین تل ≥۹۰٪ ډک.
+
+    استثنا: هغه لنډ عنوان چې په **هیڅ** سایز کې باکس نه ډکوي (لکه «زلزله») —
+    هلته د ډیفالټ سایز ته ورګرځو.
+    """
+    from pathlib import Path as _P
     from modules.design.text_render import (
-        _balance_score, descending_wrap, get_font, line_height,
+        _MIN_LINE_FILL, find_best_size, get_font, text_width,
     )
 
     d = load_config("config/settings.json").design
-    lg = [x for x in LANGS if x["code"] == code][0]
     fp = str(_P(d.fonts_dir) / d.title_font)
-    bw, bh = lg["title_box"][2], lg["title_box"][3]
-    lines = descending_wrap(title, fp, size, bw, lg["is_english"])
-    if len(lines) * line_height(get_font(fp, size), d.title_line_gap) > bh:
-        return None
-    return _balance_score(lines, size, d.title_target_size, fp,
-                          lg["is_english"], bw)[:4]
-
-
-def test_title_size_stays_at_the_default():
-    """⚠️ regression: عنوان په ۱۰۴–۱۰۷px کې راته — د ادارې لاسي ډیزاین ~۷۰ کاروي.
-
-    لامل: `_balance_score` کې تشه تر «له ډیفالټ واټن» مخکې وه، نو انتخاب تل تر
-    ټولو لوی سایز ته ټوپ وهه. اوس تشه یوازې یو **حد** دی (۸۰٪) او له هغو
-    انتخابونو چې شرط پوره کوي، ډیفالټ ته نږدې اخیستل کیږي.
-    """
-    d = load_config("config/settings.json").design
-    for code, title in _REAL_TITLES + [
-        ("ps", "د کابل په ښار کې چاودنه وشوه"),
-        ("fa", "روز گذشته ۵۳۶ خانواده مهاجر به کشور بازگشتند"),
-        ("en", "536 Returnee Families Return to Afghanistan"),
-    ]:
-        size, _lines, _widths, _bw = _title_fill(code, title)
-        assert d.title_normal_min <= size <= d.title_normal_max, (
-            f"[{code}] سایز {size} د [{d.title_normal_min}, {d.title_normal_max}] "
-            f"بند څخه بهر دی: {title[:40]}"
-        )
-        if size != d.title_target_size:
-            # له ډیفالټ خوځېدل یوازې هغه وخت جواز لري چې کیفیت یې **ریښتیا**
-            # ښه کړي (لږې سرغړونې/بد مات‌ځایونه/تش لاینونه/تشه).
-            here = _title_score_at(code, title, size)
-            at_target = _title_score_at(code, title, d.title_target_size)
-            assert at_target is None or here < at_target, (
-                f"[{code}] سایز {size} له ډیفالټ ({d.title_target_size}) خوځېدلی "
-                f"بې لامله: {here} vs {at_target} — {title[:40]}"
+    cases = [(eng, " ".join(l)) for _n, eng, _s, l in _HAND_DESIGNS]
+    cases += [([x for x in __import__("modules.design.layout", fromlist=["LANGS"]).LANGS
+                if x["code"] == c][0]["is_english"], t) for c, t in _REAL_TITLES]
+    for eng, title in cases:
+        box = _hand_box(eng)
+        bw = box[2]
+        size, lines = find_best_size(title, fp, box, eng, d)
+        if len(lines) < 2:
+            continue                      # یو-لاینه عنوان — نا-وروستی لاین نشته
+        font = get_font(fp, size)
+        for i, ln in enumerate(lines[:-1]):
+            fill = text_width(font, ln, eng) / bw
+            assert fill >= _MIN_LINE_FILL - 0.005, (
+                f"لاین {i} یوازې {100 * fill:.0f}٪ ډک دی (سایز {size}): {title[:40]}"
             )
 
 
-def test_manual_reference_titles_match_the_hand_design():
-    """د ادارې لاسي ډیزاین سره پرتله — ۷۰px او لومړی لاین ~۹۳٪ ډک."""
-    size, _lines, widths, bw = _title_fill(
-        "fa", "روز گذشته ۵۳۶ خانواده مهاجر به کشور بازگشتند")
-    assert size == 70, f"سایز {size} — لاسي ډیزاین ۷۰ کاروي"
-    assert widths[0] / bw >= 0.90, f"لومړی لاین {100 * widths[0] / bw:.0f}٪ ډک"
-    assert len(widths) == 2 and widths[1] < widths[0]
+def test_size_is_the_largest_that_keeps_the_fill_rule():
+    """سایز باید **تر ټولو لوی** وي چې ۹۰٪ قانون یې ساتلی وي.
 
+    ⚠️ دا هغه شکایت بندوي چې «سایز ډیر لوی دی حال دا چې بل سایز هم قانوني او
+    هم ښکلی و» — او برعکس یې هم («لاینونه ډیر لنډ دي»).
+    """
+    from pathlib import Path as _P
+    from modules.design.text_render import (
+        _MIN_LINE_FILL, descending_wrap, find_best_size, get_font,
+        line_height, text_width, bad_breaks,
+    )
 
-def test_fill_headroom_is_zero_so_titles_do_not_balloon():
-    """headroom باید ۰ وي — ډکوالی د wrap کار دی، نه د فونټ د لویولو."""
     d = load_config("config/settings.json").design
-    assert d.title_fill_headroom == 0
+    fp = str(_P(d.fonts_dir) / d.title_font)
+    for n, eng, _size, lines in _HAND_DESIGNS:
+        box = _hand_box(eng)
+        bw, bh = box[2], box[3]
+        chosen, _ = find_best_size(" ".join(lines), fp, box, eng, d)
+        for bigger in range(chosen + 1, d.title_max_size + 1):
+            L = descending_wrap(" ".join(lines), fp, bigger, bw, eng)
+            if len(L) * line_height(get_font(fp, bigger), d.title_line_gap) > bh:
+                continue
+            font = get_font(fp, bigger)
+            fills = [text_width(font, x, eng) / bw for x in L[:-1]] or [1.0]
+            clean = min(fills) >= _MIN_LINE_FILL and bad_breaks(L, eng) == 0
+            assert not clean, (
+                f"نمونه {n}: {bigger}px هم پاک و خو {chosen}px وټاکل شو"
+            )
+
+
+def test_title_size_band_matches_the_hand_designs():
+    """د لټون بند باید د لاسي نمونو (۵۴–۸۴px) ټوله ساحه ونیسي."""
+    d = load_config("config/settings.json").design
+    assert d.title_min_size <= 54, "لاسي نمونه ۵۴px لري"
+    assert d.title_max_size >= 84, "لاسي نمونه ۸۴px لري"
+    raw = json.loads(Path("config/settings.json").read_text(encoding="utf-8"))
+    for key in ("title_min_size", "title_max_size"):
+        assert key in raw["design"], f"{key} باید په settings.json کې وي"
+
+
+def test_short_title_falls_back_to_the_default_size():
+    """لنډ عنوان چې هیڅکله ۹۰٪ نه ډکوي — ډیفالټ سایز واخلي، نه اعظمي."""
+    from pathlib import Path as _P
+    from modules.design.text_render import find_best_size
+    from modules.design.layout import LANGS
+
+    d = load_config("config/settings.json").design
+    fp = str(_P(d.fonts_dir) / d.title_font)
+    box = [x for x in LANGS if x["code"] == "ps"][0]["title_box"]
+    for t in ("زلزله", "د کابل په ښار کې چاودنه وشوه"):
+        size, _ = find_best_size(t, fp, box, False, d)
+        assert size == d.title_target_size, f"«{t}» → {size}px"
 
 
 # ---------- د واټساپ د څو راپورونو بېلول ----------

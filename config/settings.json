@@ -44,6 +44,8 @@
     "photo_height": 1309,
     "photo_fit": "stretch",
 
+    "title_min_size": 45,
+    "title_max_size": 85,
     "title_target_size": 70,
     "title_normal_min": 63,
     "title_normal_max": 77,

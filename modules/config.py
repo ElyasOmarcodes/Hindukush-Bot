@@ -30,14 +30,16 @@ class DesignConfig:
     photo_height: int = 1309
     photo_fit: str = "stretch"  # "stretch" | "cover"
 
-    title_target_size: int = 70   # ډیفالټ (نږدې دې سایز ته ټاکل کیږي)
-    title_normal_min: int = 63    # د نږدې-ډیفالټ رینج کوچنی حد
-    title_normal_max: int = 77    # د نږدې-ډیفالټ رینج لوی حد
-    title_extended_min: int = 58  # (زوړ — اوس د بیلانس رینج normal_min کاروي)
-    # د نورمال بند تر پاسه اضافي ځای. **۰** دی — د ادارې لاسي ډیزاین ~۷۰–۷۶
-    # کاروي، نو عنوان باید د ډیفالټ (۷۰) شاوخوا پاتې شي. ډکوالی د wrap کار دی،
-    # نه د فونټ د لویولو (وګوره `descending_wrap`).
-    title_fill_headroom: int = 0
+    # ⚠️ سایز **پایله** ده، نه قانون. اصلي قانون دا دی چې هر نا-وروستی لاین
+    # ≥۹۰٪ ډک وي (وګوره `_MIN_LINE_FILL`)؛ له هغو سایزونو چې دا شرط پوره کوي،
+    # تر ټولو لوی اخیستل کیږي. د ادارې لاسي نمونې ۵۴–۸۴px کاروي، نو بند پراخ دی.
+    title_min_size: int = 45      # د لټون کوچنی حد
+    title_max_size: int = 85      # د لټون لوی حد (لاسي نمونه ۸۴ لري)
+    title_target_size: int = 70   # یوازې د «هیڅ پاک سایز نشته» حالت لپاره
+    title_normal_min: int = 63    # (زوړ — نور نه کارول کیږي)
+    title_normal_max: int = 77    # (زوړ — نور نه کارول کیږي)
+    title_extended_min: int = 58  # (زوړ)
+    title_fill_headroom: int = 0  # (زوړ)
     # مطلق کوچنی حد — که عنوان اوږد وي، سایز تر دې پورې کوچنی کیږي چې ټول ځای شي
     # (هیڅکله کلیپ نه کوو — تل ټول عنوان ښکاره کوو).
     title_abs_min: int = 20

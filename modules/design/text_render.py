@@ -131,9 +131,23 @@ _RAW_GAP_CAP = 0.22
 # (بې دې، لوی سایز به یو لاین ته یوازې یوه کلمه پریږدي او کشیده به یې نیمایي ډکه
 #  کړي — «افـــغـــانـــســـتـــان» — چې د کشیدې د کم کارولو قانون ماتوي.)
 _RAW_GAP_MAX = 0.45
-# د خبر عنوان: نا-وروستی لاین باید لږ تر لږه دومره ډک وي. تر دې ښکته «تش لاین»
-# ګڼل کیږي او سایز-ټاکونکی یې له بل سایز سره بدلوي (خو تل د ډیفالټ شاوخوا).
-_MIN_LINE_FILL = 0.80
+# ⚠️ د خبر عنوان تر ټولو مهم قانون — **د ادارې له ۶ لاسي نمونو څخه اندازه شوی**:
+#   نمونه ۱: ۶۹px، ۲ لاینه، ډکوالی ۹۷/۱۰۰
+#   نمونه ۲: ۷۸px، ۳ لاینه، ۹۹/۹۹/۹
+#   نمونه ۳: ۸۴px، ۳ لاینه، ۹۳/۹۸/۳۰
+#   نمونه ۴: ۸۰px، ۲ لاینه، ۹۹/۹۵
+#   نمونه ۵: ۵۴px، ۳ لاینه، ۱۰۰/۱۰۰/۸۶
+#   نمونه ۶: ۷۳px، ۳ لاینه، ۹۰/۹۰/۹۹
+# هر **نا-وروستی** لاین تل ≥۹۰٪ ډک دی — بې استثنا. وروستی لاین هیڅ حد نلري
+# (۹٪ هم ښه دی). او سایز ۵۴–۸۴ خوځېږي، نو «ثابت ډیفالټ» هلته قانون نه دی.
+_MIN_LINE_FILL = 0.90
+# د «ښکتنی لاین تر پاسني پراخ نه دی» قانون زغم.
+# ⚠️ لاسي نمونې پخپله ۹۷→۱۰۰، ۹۳→۹۸ او ۹۰→۹۹ لري، نو کلک قانون یې منع کاوه.
+# او په حقیقت کې د ۹۰٪ قانون دا ستونزه **پخپله** حلوي: که هر نا-وروستی لاین
+# ≥۹۰٪ وي، نو تر ټولو لوی توپیر یوازې ۱۰٪ کیدای شي. هغه پخوانۍ بده بېلګه
+# («۷۲٪ بیا ۸۷٪») پخپله د ۹۰٪ قانون له امله ردیږي. نو دا زغم یوازې د هغو
+# عنوانونو لپاره دی چې ۹۰٪ قانون یې پوره نشي کیدای.
+_DESC_TOL = 0.10
 
 
 def raggedness(lines: list[str], font_path: str, size: int, box_w: int,
@@ -336,14 +350,16 @@ def _closest(above, below, target: int):
 # «... زېربناوو د **په**» / «نښه کولو ...» — «په نښه کول» یوه ټوټه ده.
 #
 # دا ټکي له **راتلونکي** ټکي سره تړلي دي، نو د لاین په پای کې یتیم نه پریږدو:
+# ⚠️ یوازې **قوي** تړونکي (اضافت/حرف جر) — هغه چې بې خپل اسم معنا نلري.
+# پیوندونه (و، او، یا) او اشارې (دا، هغه) پکې **نشته**: د ادارې خپله لاسي
+# نمونه ۴ پخپله لاین په «و» پای ته رسوي («… درباره روابط و» | «همکاری‌های …»),
+# نو که یې منع کړو، د لاسي نمونې خلاف ځو.
 _TIE_NEXT = {
     # پښتو
-    "د", "په", "له", "تر", "پر", "چې", "که", "او", "یا", "بې", "لکه", "پرته",
-    "ترڅو", "نه", "دا", "دغه", "هغه", "دې", "دغې", "هغې", "یو", "یوه", "یوې",
-    "څو", "ټول", "ټولو", "هر", "هره", "هیڅ", "ډېر", "ډیر", "خپل", "خپله",
+    "د", "په", "له", "تر", "پر", "بې", "لکه", "پرته", "ترڅو",
     # فارسي/دري
-    "از", "به", "با", "در", "بر", "تا", "و", "برای", "روی", "بدون", "طبق",
-    "این", "آن", "همه", "یک", "بی", "بلکه", "زیرا", "چون", "طی", "علیه", "درباره",
+    "از", "به", "با", "در", "بر", "تا", "برای", "روی", "بدون", "طبق",
+    "بی", "طی", "علیه", "درباره",
 }
 # دا ټکي له **پخواني** ټکي سره تړلي دي، نو د لاین په سر کې یې نه پریږدو:
 _TIE_PREV = {"یې", "مې", "مو", "هم", "را", "نیز", "است", "اند", "شوی", "شوې"}
@@ -438,8 +454,8 @@ def descending_wrap(text: str, font_path: str, size: int, box_w: int,
                     if (k, i) not in best:
                         continue
                     pv, pt, pr = best[(k, i)]
-                    # سرغړونه: پاسنی لاین تر ښکتني **لنډ** وي.
-                    viol = pv + (1 if width(k, i) < w - 0.5 else 0)
+                    # سرغړونه: پاسنی لاین تر ښکتني **د پام وړ** لنډ وي.
+                    viol = pv + (1 if width(k, i) < w - _DESC_TOL * box_w else 0)
                     score = (viol, pt + tie, pr + ragged)
                     if score < cand:
                         cand, prev = score, (k, i)
@@ -459,23 +475,25 @@ def descending_wrap(text: str, font_path: str, size: int, box_w: int,
 
 
 def find_best_size(text: str, font_path: str, box: tuple, is_english: bool, dcfg: DesignConfig):
-    """د خبر عنوان: **ډیفالټ سایز یا ورته نږدې** — او لاینونه ډک.
+    """د خبر عنوان: **تر ټولو لوی سایز چې نا-وروستي لاینونه یې ≥۹۰٪ ډک وي**.
 
-    ⚠️ دواړه پخوانۍ تېروتنې دلته حل شوې:
-      • د تش-فضا ستونزه (لاینونه ۵۷٪ ډک) — لامل یې **سایز نه و**، بلکې دا چې
-        `descending_wrap` وروستی لاین هم شمېره او لاینونه یې برابرول. اوس
-        وروستی لاین معاف دی، نو پاسني لاینونه پخپله ۹۰–۱۰۰٪ ډکیږي.
-      • د ډکوالي په نامه فونټ لویول (۷۰ → ۱۰۴px) — د ادارې لاسي ډیزاین ~۷۰–۷۶
-        کاروي، نو دا ډیر لوی و. اوس بند [normal_min، normal_max] دی او له هغه
-        منځ کې **ډیفالټ ته نږدې** اخلو.
+    دا قانون د ادارې له ۶ لاسي نمونو څخه اندازه شوی (وګوره `_MIN_LINE_FILL`).
+    په ټولو شپږو کې هر نا-وروستی لاین ۹۰–۱۰۰٪ ډک دی، خو سایز ۵۴ تر ۸۴ خوځېږي —
+    نو **ډکوالی قانون دی، سایز یې پایله**. زموږ پخوانی «ډیفالټ ته نږدې» قانون
+    همدا برعکس کاوه، ځکه:
+      • نمونه ۱ کې رباټ ۷۵px/۳ لاینه [۹۹/۷۴/۴۰] جوړاوه، لاسي ۶۹px/۲ لاینه [۹۷/۱۰۰]
+      • نمونه ۶ کې رباټ ۶۰px/۴ لاینه [۷۴/۶۹/۶۵/۲۱]، لاسي ۷۳px/۳ لاینه [۹۰/۹۰/۹۹]
+    دواړه شکایتونه همدا وو: «ځینې وخت لاینونه ډیر لنډ وي» او «ځینې وخت سایز
+    ډیر لوی وي، حال دا چې بل سایز هم قانوني او هم ښکلی و».
 
-    ترتیب: ۱) سرغړونه نشته، ۲) ډیفالټ ته نږدې، ۳) لاینونه ډک.
+    ترتیب: ۱) سرغړونه، ۲) بد مات‌ځای، ۳) تش لاین (<۹۰٪)، بیا **تر ټولو لوی سایز**.
+    که هیڅ سایز پاک نه و، د ډیفالټ شاوخوا ته ورګرځو (لنډ عنوان چې هیڅکله
+    نه ډکېږي، لکه «زلزله»).
     """
     _, _, box_w, box_h = box
-    lo, target = dcfg.title_normal_min, dcfg.title_target_size
-    # پورتنی حد. `title_fill_headroom` اوس ۰ دی — لنډ عنوان هم د ډیفالټ شاوخوا
-    # پاتې کیږي. (که چا وغوښتل چې لنډ عنوان لوی شي، دا شمېره پورته کولی شي.)
-    hi = dcfg.title_normal_max + dcfg.title_fill_headroom
+    target = dcfg.title_target_size
+    hi = dcfg.title_max_size
+    lo = max(dcfg.title_abs_min, dcfg.title_min_size)
 
     fitting = []
     for size in range(hi, lo - 1, -1):
@@ -483,20 +501,29 @@ def find_best_size(text: str, font_path: str, box: tuple, is_english: bool, dcfg
         lh = line_height(get_font(font_path, size), dcfg.title_line_gap)
         if len(lines) * lh <= box_h:
             fitting.append((size, lines))
-    if fitting:
-        return min(fitting, key=lambda sl: _balance_score(
-            sl[1], sl[0], target, font_path, is_english, box_w))
 
-    # نږدې-ډیفالټ رینج کې ونه ځایېد → تر abs_min پورې کوچنی کوه (شرینک-ټو-فټ).
-    abs_min = min(dcfg.title_abs_min, lo)
-    for size in range(lo - 1, abs_min - 1, -1):
+    if fitting:
+        scored = [(_balance_score(l, sz, target, font_path, is_english, box_w), sz, l)
+                  for sz, l in fitting]
+        # پاک = نه سرغړونه، نه بد مات‌ځای، نه تش لاین. له هغو **لوی** سایز.
+        clean = [(sz, l) for sc, sz, l in scored if sc[0] == sc[1] == sc[2] == 0]
+        if clean:
+            return max(clean, key=lambda sl: sl[0])
+        # هیڅ یو پاک نه و → تر ټولو لږې سرغړونې، بیا ډیفالټ ته نږدې.
+        best = min(scored, key=lambda x: (x[0][0], x[0][1], x[0][2],
+                                          abs(x[1] - target), -x[1]))
+        return best[1], best[2]
+
+    # په بند کې هیڅ ونه ځایېد → تر abs_min پورې کوچنی کوه (شرینک-ټو-فټ).
+    for size in range(lo - 1, dcfg.title_abs_min - 1, -1):
         lines = descending_wrap(text, font_path, size, box_w, is_english)
         lh = line_height(get_font(font_path, size), dcfg.title_line_gap)
         if len(lines) * lh <= box_h:
             logger.info("عنوان اوږد و — سایز تر %dpx ښکته شو چې ټول ځای شي", size)
             return size, lines
-    logger.warning("عنوان ډیر اوږد و — د %dpx مطلق کوچني سایز سره", abs_min)
-    return abs_min, wrap_text(text, font_path, abs_min, box_w, is_english)
+    logger.warning("عنوان ډیر اوږد و — د %dpx مطلق کوچني سایز سره", dcfg.title_abs_min)
+    return dcfg.title_abs_min, wrap_text(text, font_path, dcfg.title_abs_min,
+                                         box_w, is_english)
 
 
 def _balance_score(lines: list[str], size: int, target: int, font_path: str,
@@ -517,7 +544,9 @@ def _balance_score(lines: list[str], size: int, target: int, font_path: str,
     """
     font = get_font(font_path, size)
     widths = [text_width(font, ln, is_english) for ln in lines]
-    violations = sum(1 for i in range(len(widths) - 1) if widths[i] < widths[i + 1] - 0.5)
+    # ⚠️ زغم سره — لاسي نمونې پخپله ۹۷→۱۰۰ او ۹۳→۹۸ لري (وګوره `_DESC_TOL`).
+    violations = sum(1 for i in range(len(widths) - 1)
+                     if widths[i] < widths[i + 1] - _DESC_TOL * box_w)
     head = widths[:-1] or widths
     fills = [min(w, box_w) / box_w for w in head] if box_w else [1.0]
     empties = sum(1 for f in fills if f < _MIN_LINE_FILL)
