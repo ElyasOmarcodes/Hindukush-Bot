@@ -14,6 +14,8 @@ import time
 from pathlib import Path
 
 from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
     InputMediaDocument,
     KeyboardButton,
     ReplyKeyboardMarkup,
@@ -177,6 +179,98 @@ def _missing_note(done) -> str | None:
     logger.info("د دې ژبو راپور نه و راغلی: %s", "، ".join(names))
     return ("⚠️ د «" + "» او «".join(names) + "» راپور مو نه و راستولی — "
             "ډیزاین یې جوړ نشو.")
+
+
+# ─────────────── د موقعیت لاسي کنټرول (شیشه‌یي منو) ───────────────
+# جیمنای موقعیت پخپله ټاکي، خو ځینې وخت یې سم نه ټاکي. د پکیج د نتیجې سره یوه
+# شیشه‌یي منو ورکوو چې کارونکی یې په یوه کلیک بدل کړي — انځورونه بیا جوړیږي.
+LOCATION_CHOICES = [
+    ("auto", "اتومات"),
+    ("Afghanistan", "افغانستان"),
+    ("Region", "سیمه"),
+    ("Middle East", "منځنی ختیځ"),
+    ("World", "نړۍ"),
+]
+LOCATION_LABELS = dict(LOCATION_CHOICES)
+
+
+def location_keyboard(active: str = "auto") -> InlineKeyboardMarkup:
+    """د موقعیت شیشه‌یي منو — روان انتخاب ✅ نښه لري."""
+    def btn(value: str) -> InlineKeyboardButton:
+        mark = "✅ " if value == active else ""
+        return InlineKeyboardButton(mark + LOCATION_LABELS[value],
+                                    callback_data=f"loc:{value}")
+    return InlineKeyboardMarkup([
+        [btn("auto")],
+        [btn("Afghanistan"), btn("Region")],
+        [btn("Middle East"), btn("World")],
+    ])
+
+
+def _location_text(active: str, detected: str) -> str:
+    if active == "auto":
+        return f"📍 موقعیت: *اتومات* — جیمنای «{LOCATION_LABELS.get(detected, detected)}» وټاکه"
+    return f"📍 موقعیت: *{LOCATION_LABELS[active]}* (لاسي)"
+
+
+async def show_location_menu(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
+                             detected: str) -> None:
+    """د پکیج د نتیجې سره د موقعیت شیشه‌یي منو وښیه."""
+    state = _state(context)
+    old_id = state.location_msg_id
+    try:
+        m = await context.bot.send_message(
+            chat_id, _location_text(state.last_location, detected),
+            reply_markup=location_keyboard(state.last_location),
+            parse_mode="Markdown",
+        )
+    except Exception as err:  # noqa: BLE001 - د موقعیت منو حیاتي نه ده
+        logger.debug("د موقعیت منو: %s", err)
+        return
+    state.location_msg_id = m.message_id
+    if old_id:
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=old_id)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+async def _rerender_location(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
+                             value: str) -> str | None:
+    """د وروستي پکیج انځورونه د نوي موقعیت سره بیا جوړ او ولیږه.
+
+    خطا (د پښتو پیغام) راګرځوي که بیا جوړول ونشي، نه‌نو None.
+    """
+    state = _state(context)
+    if not state.last_pkg_dir:
+        return "⚠️ وروستی پکیج نه دی پاتې — لومړی یو نوی پکیج جوړ کړئ."
+    pkg_dir = Path(state.last_pkg_dir)
+    result = pkg_dir / "result.json"
+    if not result.exists():
+        return "⚠️ د پکیج معلومات ورک دي."
+    data = json.loads(result.read_text(encoding="utf-8"))
+    # «اتومات» = هغه څه چې جیمنای پخپله ټاکلي وو (په result.json کې خوندي دي).
+    data["location"] = (state.last_detected_location or data.get("location", "")
+                        ) if value == "auto" else value
+
+    news_img = pkg_dir / "image.jpg"
+    news_path = str(news_img) if news_img.exists() else None
+    loop = asyncio.get_running_loop()
+    paths: list[Path] = []
+    for lang in LANGS:
+        if not (data.get(lang["title_key"]) or "").strip():
+            continue
+        try:
+            paths.append(await loop.run_in_executor(
+                None, design_render.render_one, lang, data, news_path, pkg_dir,
+                state.config))
+        except Exception as err:  # noqa: BLE001
+            logger.error("[%s] د بیا-جوړولو ناکامي: %s", lang["code"], err, exc_info=True)
+    if not paths:
+        return "⚠️ انځورونه بیا جوړ نشول."
+    await _send_designs(context, chat_id, paths, state.last_reply_to)
+    logger.info("د موقعیت بدلون → %s، %d انځورونه بیا ولیږل شول", value, len(paths))
+    return None
 
 
 # د دورې د پای پیغام — کیبورډ یې راوړي. لنډ ساتل شوی دی.
@@ -483,15 +577,45 @@ async def cmd_cmp(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """د شیشه‌یي بټنو ځواب.
+    """د شیشه‌یي بټنو ځواب — اوس یوازې د موقعیت لاسي انتخاب.
 
-    ⚠️ د تایید ګام لرې شو، نو نوې شیشه‌یي بټنې نه جوړیږو. دا اداره-کوونکی
-    یوازې د **زړو** پیغامونو لپاره پاتې دی چې لا په چټ کې وي — نه‌نو بټن به
-    تل «loading» پاتې شي.
+    ⚠️ د تایید ګام لرې شوی دی؛ که د **زړو** پیغامونو بټن ووهل شي، یوازې
+    ځواب ورکوو او بټنې لرې کوو، نه‌نو بټن تل «loading» پاتې کیږي.
     """
     q = update.callback_query
     if not q:
         return
+    data = q.data or ""
+    state = _state(context)
+
+    if data.startswith("loc:"):
+        value = data[4:]
+        if value not in LOCATION_LABELS:
+            await q.answer("نامعلوم موقعیت")
+            return
+        if value == state.last_location:
+            await q.answer("دمخه همدا ټاکل شوی دی")
+            return
+        if state.processing:
+            await q.answer("⏳ یو پروسس روان دی", show_alert=True)
+            return
+        await q.answer("⏳ بیا جوړیږي…")
+        state.last_location = value
+        detected = state.last_detected_location
+        try:
+            await q.edit_message_text(
+                _location_text(value, detected),
+                reply_markup=location_keyboard(value), parse_mode="Markdown")
+        except Exception:  # noqa: BLE001
+            pass
+        err = await _rerender_location(context, q.message.chat_id, value)
+        if err:
+            try:
+                await context.bot.send_message(q.message.chat_id, err)
+            except Exception:  # noqa: BLE001
+                pass
+        return
+
     await q.answer()
     try:
         await q.edit_message_reply_markup(reply_markup=None)
@@ -620,6 +744,12 @@ async def run_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None
         logger.info("%d انځورونه ګروپ ته ولیږل شول", len(paths))
         done = [lg["code"] for lg in LANGS if (data.get(lg["title_key"]) or "").strip()]
         note = _missing_note(done)
+        # د موقعیت لاسي کنټرول لپاره پکیج یاد وساته او شیشه‌یي منو وښیه.
+        state.last_pkg_dir = str(pkg_dir)
+        state.last_reply_to = reply_to
+        state.last_location = "auto"
+        state.last_detected_location = data.get("location", "")
+        await show_location_menu(context, chat_id, state.last_detected_location)
         purge = True
     except Exception as err:  # noqa: BLE001
         logger.error("د pipeline خطا: %s", err, exc_info=True)

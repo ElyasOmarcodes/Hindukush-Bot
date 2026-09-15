@@ -2358,8 +2358,9 @@ def test_no_confirmation_step_remains():
     from modules import commands
     src = _P("modules/commands.py").read_text(encoding="utf-8")
     assert "cmp_confirm" not in src and "cmp_cancel" not in src
-    assert "InlineKeyboardMarkup" not in src, "شیشه‌یي کیبورډ نور نه کارول کیږي"
     assert "تایید کوئ چې پروسس پیل شي" not in src
+    # شیشه‌یي کیبورډ اوس یوازې د **موقعیت** لپاره دی، نه د تایید.
+    assert "InlineKeyboardMarkup" in src and "loc:" in src
     assert commands.cmd_cmp.__doc__ and "سمدلاسه" in commands.cmd_cmp.__doc__
 
 
@@ -2440,3 +2441,95 @@ def test_refresh_count_sends_new_then_deletes_old():
     labels = [b.text for row in order[0][2].keyboard for b in row]
     assert labels[0] == commands.complete_label(2)
     assert 999 in state.chatter, "د دورې په پای کې باید ړنګ شي"
+
+
+# ---------- د موقعیت لاسي کنټرول (شیشه‌یي منو) ----------
+
+def test_location_keyboard_has_five_choices_with_auto_default():
+    """۵ برخې: اتومات (ډیفالټ ✅)، افغانستان، سیمه، منځنی ختیځ، نړۍ."""
+    from modules import commands
+    from modules.design.layout import VALID_LOCATIONS
+
+    values = [v for v, _ in commands.LOCATION_CHOICES]
+    assert values == ["auto", *VALID_LOCATIONS], values
+    labels = [b.text for row in commands.location_keyboard().inline_keyboard for b in row]
+    assert labels[0].startswith("✅"), "اتومات باید ډیفالټ ټاکل شوی وي"
+    assert labels[0].endswith("اتومات")
+    assert [l.lstrip("✅ ") for l in labels] == [
+        "اتومات", "افغانستان", "سیمه", "منځنی ختیځ", "نړۍ"]
+    data = [b.callback_data for row in commands.location_keyboard().inline_keyboard
+            for b in row]
+    assert data == ["loc:auto", "loc:Afghanistan", "loc:Region",
+                    "loc:Middle East", "loc:World"]
+    for cd in data:
+        assert len(cd.encode()) <= 64, "د ټلګرام د callback_data حد ۶۴ بایټه دی"
+
+
+def test_location_keyboard_marks_the_active_choice():
+    from modules import commands
+    kb = commands.location_keyboard("Region")
+    marked = [b.text for row in kb.inline_keyboard for b in row if b.text.startswith("✅")]
+    assert marked == ["✅ سیمه"]
+
+
+def test_location_callback_rerenders_with_the_chosen_value(tmp_path):
+    """د «سیمه» وهل باید انځورونه د نوي موقعیت سره بیا جوړ او ولیږي."""
+    import asyncio, json as _json
+    from modules import commands
+
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "result.json").write_text(_json.dumps({
+        "title_ps": "د ازموینې عنوان دلته دی او لږ اوږد دی",
+        "source_ps": "سرچینه",
+        "title_fa": "", "source_fa": "", "title_en": "", "source_en": "",
+        "location": "World",
+    }, ensure_ascii=False), encoding="utf-8")
+
+    state = _state()
+    state.last_pkg_dir = str(pkg)
+    state.last_detected_location = "World"
+    state.last_reply_to = 55
+    sent = {}
+
+    async def fake_send(context, chat_id, paths, reply_to=None):
+        sent["paths"] = list(paths)
+        sent["reply_to"] = reply_to
+
+    class _Ctx:
+        class application:
+            bot_data = {"state": state}
+
+    old = commands._send_designs
+    commands._send_designs = fake_send
+    try:
+        err = asyncio.run(commands._rerender_location(_Ctx(), 9, "Region"))
+    finally:
+        commands._send_designs = old
+
+    assert err is None, err
+    assert sent["paths"], "هیڅ انځور بیا جوړ نشو"
+    assert sent["reply_to"] == 55, "باید هماغه لومړي متني پیغام ته ریپلای شي"
+    # result.json نه بدلیږي — «اتومات» باید لا هم جیمنای ته ورګرځي.
+    assert _json.loads((pkg / "result.json").read_text(encoding="utf-8"))["location"] == "World"
+
+
+def test_rerender_without_a_package_reports_instead_of_crashing():
+    import asyncio
+    from modules import commands
+    state = _state()
+
+    class _Ctx:
+        class application:
+            bot_data = {"state": state}
+
+    err = asyncio.run(commands._rerender_location(_Ctx(), 9, "Region"))
+    assert err and "پکیج" in err
+
+
+def test_location_text_shows_auto_detection():
+    from modules import commands
+    auto = commands._location_text("auto", "Region")
+    assert "اتومات" in auto and "سیمه" in auto
+    manual = commands._location_text("Middle East", "Region")
+    assert "منځنی ختیځ" in manual and "لاسي" in manual

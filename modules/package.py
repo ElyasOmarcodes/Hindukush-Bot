@@ -55,6 +55,14 @@ class BotState:
     # توکی یې تازه کوي (نوی لیږو، زوړ ړنګوو). لکه `menu_msg_id`، د `reset` سره
     # **نه** پاکیږي — نه‌نو زوړ پیغام به بې-څښتنه پاتې شي.
     count_msg_id: int | None = None
+    # ── د وروستي (بریالي) خبر-پکیج یادښت — د موقعیت د لاسي بدلون لپاره ──
+    # د پکیج فولډر (result.json + image.jpg پکې دي)، د ریپلای هدف، او هغه
+    # موقعیت چې اوس کارول شوی. دا د `reset` سره **نه** پاکیږي.
+    last_pkg_dir: str | None = None
+    last_reply_to: int | None = None
+    last_location: str = "auto"
+    last_detected_location: str = ""
+    location_msg_id: int | None = None
 
     def reset(self) -> None:
         """د دورې وروسته بشپړ پاکول.  Full reset after a cycle."""
