@@ -26,6 +26,9 @@ class BufferItem:
     message_id: int
     content: str = ""      # د متن لپاره / text body
     path: str | None = None  # د انځور لپاره د پینډنګ فایل لار / pending image path
+    # ⚠️ آیا دا انځور دمخه د پکیج فولډر ته لېږدول شوی؟ که هو، `reset` یې **نه**
+    # ړنګوي — نه‌نو د موقعیت د بیا-جوړولو پر مهال بک‌ګراونډ سپین راځي.
+    saved: bool = False
 
 
 @dataclass
@@ -66,9 +69,13 @@ class BotState:
 
     def reset(self) -> None:
         """د دورې وروسته بشپړ پاکول.  Full reset after a cycle."""
-        # د پینډنګ انځورونه پاک کړه چې کثافت پاتې نشي.
+        # ⚠️ یوازې **پینډنګ** انځورونه پاکوو (هغه چې پکیج ته نه دي تللي).
+        # پخوا مو دلته هر انځور ړنګاوه — خو `save_package` د توکي `path` د پکیج
+        # فولډر ته اړوي، نو reset به د پکیج خپل `image.jpg` ړنګاوه. پایله: د
+        # موقعیت د بټن په وهلو سره بیا-جوړ شوي انځورونه **بې بک‌ګراونډه** (سپین)
+        # راتلل، ځکه اصلي عکس نور موجود نه و.
         for item in self.buffer:
-            if item.type == "image" and item.path:
+            if item.type == "image" and item.path and not item.saved:
                 Path(item.path).unlink(missing_ok=True)
         self.buffer.clear()
         self.media_buffer.clear()
@@ -144,6 +151,7 @@ def save_package(state: BotState) -> Path:
             # اصلي (بشپړ کیفیت) انځور دننه ور واستوه.
             shutil.move(item.path, str(pkg_dir / "image.jpg"))
             item.path = str(pkg_dir / "image.jpg")
+            item.saved = True      # د پکیج ملکیت دی — `reset` دې یې ونه ړنګوي
 
     return pkg_dir
 

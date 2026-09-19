@@ -200,11 +200,9 @@ def location_keyboard(active: str = "auto") -> InlineKeyboardMarkup:
         mark = "✅ " if value == active else ""
         return InlineKeyboardButton(mark + LOCATION_LABELS[value],
                                     callback_data=f"loc:{value}")
-    return InlineKeyboardMarkup([
-        [btn("auto")],
-        [btn("Afghanistan"), btn("Region")],
-        [btn("Middle East"), btn("World")],
-    ])
+    # ⚠️ هر بټن خپله کرښه لري — دوه-ستنیز ترتیب ناهموار و («سیمه» لنډه،
+    # «منځنی ختیځ» اوږده)، او په مبایل کې یې وهل ستونزمن و.
+    return InlineKeyboardMarkup([[btn(v)] for v, _ in LOCATION_CHOICES])
 
 
 def _location_text(active: str, detected: str) -> str:

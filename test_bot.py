@@ -2457,8 +2457,10 @@ def test_location_keyboard_has_five_choices_with_auto_default():
     assert labels[0].endswith("اتومات")
     assert [l.lstrip("✅ ") for l in labels] == [
         "اتومات", "افغانستان", "سیمه", "منځنی ختیځ", "نړۍ"]
-    data = [b.callback_data for row in commands.location_keyboard().inline_keyboard
-            for b in row]
+    rows = commands.location_keyboard().inline_keyboard
+    assert all(len(r) == 1 for r in rows), "هر بټن باید خپله کرښه ولري (هوسا ترتیب)"
+    assert len(rows) == 5
+    data = [b.callback_data for row in rows for b in row]
     assert data == ["loc:auto", "loc:Afghanistan", "loc:Region",
                     "loc:Middle East", "loc:World"]
     for cd in data:
@@ -2533,3 +2535,40 @@ def test_location_text_shows_auto_detection():
     assert "اتومات" in auto and "سیمه" in auto
     manual = commands._location_text("Middle East", "Region")
     assert "منځنی ختیځ" in manual and "لاسي" in manual
+
+
+def test_package_image_survives_the_reset(tmp_path):
+    """⚠️ regression: د موقعیت په بدلولو سره بیا-جوړ شوي انځورونه سپین راتلل.
+
+    لامل: `save_package` د توکي `path` د پکیج فولډر ته اړوله، بیا `reset` هر
+    انځور ړنګاوه — نو د پکیج خپل `image.jpg` هم ورک شو. کله چې کارونکي د
+    موقعیت بټن ووهه، بک‌ګراونډ عکس نور موجود نه و → سپینه ساحه.
+    """
+    from modules.package import BufferItem, save_package
+
+    state = _state()
+    state.config.packages_dir = str(tmp_path / "pkgs")
+    pending = tmp_path / "pending.jpg"
+    pending.write_bytes(b"\xff\xd8\xff\xdb fake jpeg")
+    state.buffer.append(BufferItem(type="text", message_id=1, content="راپور"))
+    state.buffer.append(BufferItem(type="image", message_id=2, path=str(pending)))
+
+    pkg_dir = save_package(state)
+    img = pkg_dir / "image.jpg"
+    assert img.exists(), "save_package باید انځور پکیج ته ولېږدوي"
+    assert not pending.exists(), "پینډنګ فایل باید لېږدول شوی وي"
+
+    state.reset()
+    assert img.exists(), "د پکیج انځور باید د reset وروسته هم پاتې شي"
+
+
+def test_reset_still_removes_unsaved_pending_images(tmp_path):
+    """خو هغه انځور چې پکیج ته نه دی تللی، باید پاک شي (کثافت پاتې نشي)."""
+    from modules.package import BufferItem
+
+    state = _state()
+    pending = tmp_path / "orphan.jpg"
+    pending.write_bytes(b"x")
+    state.buffer.append(BufferItem(type="image", message_id=3, path=str(pending)))
+    state.reset()
+    assert not pending.exists(), "نه-خوندي شوی پینډنګ انځور باید ړنګ شي"
