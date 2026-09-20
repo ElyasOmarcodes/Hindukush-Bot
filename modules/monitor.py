@@ -14,7 +14,7 @@ from pathlib import Path
 from telegram import ReactionTypeEmoji, Update
 from telegram.ext import ContextTypes
 
-from .commands import refresh_count
+from .commands import refresh_count, show_crop_menu
 from .package import BotState, BufferItem, can_add
 from .utils import ensure_dirs, split_whatsapp
 
@@ -132,6 +132,9 @@ async def _add_image(context, state: BotState, msg) -> None:
     logger.info("پیغام #%d → بفر (انځور) — توکی %d", msg.message_id, index + 1)
     await react_ordered(context, state, msg.chat_id, msg.message_id, index)
     await refresh_count(context, msg.chat_id)
+    # د خبر قالب ۵:۴ غواړي — کارونکي ته د ځیرک کرپ انتخاب ورکوو (ډیفالټ: نه).
+    if state.mode == "news":
+        await show_crop_menu(context, msg.chat_id, msg.message_id)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

@@ -66,6 +66,10 @@ class BotState:
     last_location: str = "auto"
     last_detected_location: str = ""
     location_msg_id: int | None = None
+    # ⚠️ ځیرک کرپ — **ډیفالټ بند**. کارونکی یې د انځور تر څنګ په بټن فعالوي.
+    # د `reset` سره بیرته بند کیږي (هر پکیج خپله پریکړه لري).
+    smart_crop: bool = False
+    crop_msg_id: int | None = None
 
     def reset(self) -> None:
         """د دورې وروسته بشپړ پاکول.  Full reset after a cycle."""
@@ -83,6 +87,8 @@ class BotState:
             task.cancel()
         self.media_tasks.clear()
         self.processing = False
+        self.smart_crop = False       # هر نوی پکیج له ډیفالټ (بند) پیلیږي
+        self.crop_msg_id = None
         # ⚠️ `chatter` دلته **نه** پاکوو — هغه پیغامونه لا په چټ کې دي او باید
         # د بریالۍ دورې وروسته (په _purge_chatter کې) ړنګ شي. که دلته یې پاک
         # کړو، د «جوړول → عاجل» ترمنځ reset یې ورکوي او بیا نه ړنګیږي.

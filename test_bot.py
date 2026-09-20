@@ -2450,16 +2450,17 @@ def test_location_keyboard_has_five_choices_with_auto_default():
     from modules import commands
     from modules.design.layout import VALID_LOCATIONS
 
-    values = [v for v, _ in commands.LOCATION_CHOICES]
+    values = [v for v, _e, _n in commands.LOCATION_CHOICES]
     assert values == ["auto", *VALID_LOCATIONS], values
-    labels = [b.text for row in commands.location_keyboard().inline_keyboard for b in row]
-    assert labels[0].startswith("✅"), "اتومات باید ډیفالټ ټاکل شوی وي"
-    assert labels[0].endswith("اتومات")
-    assert [l.lstrip("✅ ") for l in labels] == [
-        "اتومات", "افغانستان", "سیمه", "منځنی ختیځ", "نړۍ"]
     rows = commands.location_keyboard().inline_keyboard
-    assert all(len(r) == 1 for r in rows), "هر بټن باید خپله کرښه ولري (هوسا ترتیب)"
-    assert len(rows) == 5
+    # لنډ ترتیب — یوازې دوه کرښې (پخوا ۵ کرښې وې او ډیر ځای یې نیوه).
+    assert len(rows) == 2 and [len(r) for r in rows] == [3, 2]
+    labels = [b.text for row in rows for b in row]
+    assert labels[0].startswith("✅"), "اتومات باید ډیفالټ ټاکل شوی وي"
+    assert [l.split(" ", 1)[1] for l in labels] == [
+        "اتومات", "افغانستان", "سیمه", "منځنی ختیځ", "نړۍ"]
+    # هر نا-فعال بټن خپل رنګ-ایموجي لري (ټلګرام د بټن رنګ نه مني).
+    assert all(l.split(" ", 1)[0] for l in labels)
     data = [b.callback_data for row in rows for b in row]
     assert data == ["loc:auto", "loc:Afghanistan", "loc:Region",
                     "loc:Middle East", "loc:World"]
@@ -2572,3 +2573,132 @@ def test_reset_still_removes_unsaved_pending_images(tmp_path):
     state.buffer.append(BufferItem(type="image", message_id=3, path=str(pending)))
     state.reset()
     assert not pending.exists(), "نه-خوندي شوی پینډنګ انځور باید ړنګ شي"
+
+
+# ---------- ځیرک کرپ (۵:۴) ----------
+
+_RATIO_54 = 1650 / 1309
+
+
+def _subject_image(size, subject):
+    """یو ازموینه‌یي انځور — تیاره شالید + د پوستکي رنګ سوژه."""
+    from PIL import Image, ImageDraw
+    im = Image.new("RGB", size, (28, 34, 46))
+    d = ImageDraw.Draw(im)
+    cx, cy, r = subject
+    d.ellipse([cx - r, cy - r, cx + r, cy + r], fill=(225, 180, 150))
+    d.rectangle([cx - r // 2, cy + r // 2, cx + r // 2, cy + r * 2], fill=(200, 160, 130))
+    return im
+
+
+def test_smart_crop_box_keeps_the_target_ratio():
+    """کرپ شوې کړکۍ باید دقیقاً د ۵:۴ نسبت ولري او د انځور دننه وي."""
+    from modules.design.smartcrop import smart_crop_box
+    for size in [(3000, 1500), (1200, 1600), (4000, 3000), (900, 900)]:
+        im = _subject_image(size, (size[0] // 3, size[1] // 2, min(size) // 8))
+        l, t, r, b = smart_crop_box(im, _RATIO_54)
+        assert 0 <= l < r <= size[0] and 0 <= t < b <= size[1], "له انځوره بهر"
+        assert abs((r - l) / (b - t) - _RATIO_54) < 0.02, "نسبت ناسم دی"
+        # «تر ټولو لوی ممکن مستطیل» — یو اړخ باید بشپړ وي.
+        assert (r - l) == size[0] or (b - t) == size[1], "تر ټولو لوی نه دی"
+
+
+def test_smart_crop_keeps_the_subject_inside():
+    """⚠️ اصلي شرط: سوژه باید له مستطیله بهر ونه غورځول شي."""
+    from modules.design.smartcrop import smart_crop_box
+    W, H, r = 3000, 1500, 200
+    for cx in (350, 1500, 2650):                 # کیڼ / مرکز / ښي
+        im = _subject_image((W, H), (cx, H // 2, r))
+        l, t, right, b = smart_crop_box(im, _RATIO_54)
+        assert l <= cx - r and cx + r <= right, (
+            f"سوژه په x={cx} کې له کړکۍ ({l}–{right}) بهر پاتې شوه"
+        )
+
+
+def test_smart_crop_follows_the_subject_not_the_centre():
+    """د څنډې سوژه باید کړکۍ **راکش** کړي — نه دا چې تل مرکز واخلي."""
+    from modules.design.smartcrop import smart_crop_box
+    W, H = 3000, 1500
+    left_box = smart_crop_box(_subject_image((W, H), (300, 750, 200)), _RATIO_54)
+    right_box = smart_crop_box(_subject_image((W, H), (2700, 750, 200)), _RATIO_54)
+    assert left_box[0] < right_box[0], "کړکۍ د سوژې سره نه خوځیږي"
+
+
+def test_flat_image_is_centred():
+    """که هیڅ سوژه نه وي، کړکۍ باید مرکز شي (نه څنډه ونیسي).
+
+    ⚠️ regression: `FIND_EDGES` د انځور پر څنډو روښانه چوکاټ پریږدي، نو ټوله
+    انرژي څنډې ته ټوپ وهله او کرپ به تل له ۰ څخه پیل کېده.
+    """
+    from PIL import Image
+    from modules.design.smartcrop import smart_crop_box
+    im = Image.new("RGB", (3000, 1500), (30, 30, 30))
+    l, _t, r, _b = smart_crop_box(im, _RATIO_54)
+    centre = (l + r) / 2
+    assert abs(centre - 1500) < 60, f"مرکز x={centre:.0f} — باید ~۱۵۰۰ وي"
+
+
+def test_already_correct_ratio_is_not_cropped():
+    from PIL import Image
+    from modules.design.smartcrop import smart_crop_box
+    im = Image.new("RGB", (1650, 1309), (90, 90, 90))
+    assert smart_crop_box(im, _RATIO_54) == (0, 0, 1650, 1309)
+
+
+def test_smart_crop_is_fast_enough_for_railway():
+    """باید چټک وي — د هر پکیج لپاره چلیږي، پر یوه وړوکي سرور."""
+    import time
+    from modules.design.smartcrop import smart_crop_box
+    im = _subject_image((4000, 3000), (3000, 1500, 400))
+    smart_crop_box(im, _RATIO_54)                # warm-up
+    t = time.perf_counter()
+    smart_crop_box(im, _RATIO_54)
+    ms = (time.perf_counter() - t) * 1000
+    assert ms < 400, f"{ms:.0f}ms — ډیر ورو دی"
+
+
+def test_prepare_news_image_smart_matches_the_photo_box(tmp_path):
+    from PIL import Image
+    from modules.design.canvas import prepare_news_image
+    d = load_config("config/settings.json").design
+    p = tmp_path / "wide.jpg"
+    _subject_image((3000, 1200), (2400, 600, 200)).save(p)
+    for smart in (False, True):
+        out = prepare_news_image(p, d, smart=smart)
+        assert out.size == (d.photo_width, d.photo_height)
+
+
+def test_smart_crop_is_off_by_default_and_resets():
+    """ډیفالټ: نه. او هر نوی پکیج له ډیفالټ پیلیږي."""
+    state = _state()
+    assert state.smart_crop is False
+    state.smart_crop = True
+    state.reset()
+    assert state.smart_crop is False, "reset باید کرپ بیرته بند کړي"
+
+
+def test_crop_keyboard_marks_the_active_choice():
+    from modules import commands
+    off = [b.text for b in commands.crop_keyboard(False).inline_keyboard[0]]
+    on = [b.text for b in commands.crop_keyboard(True).inline_keyboard[0]]
+    assert off[0].startswith("✅") and not off[1].startswith("✅")
+    assert on[1].startswith("✅") and not on[0].startswith("✅")
+    data = [b.callback_data for b in commands.crop_keyboard(False).inline_keyboard[0]]
+    assert data == ["crop:off", "crop:on"]
+
+
+def test_smart_crop_flag_travels_with_the_package_data(tmp_path):
+    """د کرپ حالت باید په `result.json` کې پاتې شي — د بیا-جوړولو لپاره."""
+    from PIL import Image
+    from modules.design.layout import LANGS
+    from modules.design.render import render_one
+    cfg = load_config("config/settings.json")
+    photo = tmp_path / "p.jpg"
+    _subject_image((2400, 900), (1900, 450, 160)).save(photo)
+    lg = [x for x in LANGS if x["code"] == "ps"][0]
+    data = {"title_ps": "د ازموینې عنوان چې لږ اوږد وي او لاینونه جوړ کړي",
+            "source_ps": "سرچینه", "title_fa": "", "source_fa": "",
+            "title_en": "", "source_en": "", "location": "Afghanistan",
+            "smart_crop": True}
+    out = render_one(lg, data, str(photo), tmp_path, cfg)
+    assert out.exists()

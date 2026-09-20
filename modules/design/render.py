@@ -33,7 +33,10 @@ def render_one(lang: dict, data: dict, news_image_path, out_dir, cfg: Config) ->
     template = Path(dcfg.templates_dir) / lang["template"]
 
     # ۱+۲. بنسټ + د خبر انځور + ټمپلیټ
-    canvas = build_canvas(news_image_path, template, dcfg)
+    # `smart_crop` د پکیج پر بنسټ دی (کارونکی یې په بټن ټاکي)، نو له `data`
+    # سره سفر کوي — نو د موقعیت د بیا-جوړولو پر مهال هم پاتې کیږي.
+    canvas = build_canvas(news_image_path, template, dcfg,
+                          smart=bool(data.get("smart_crop")))
 
     # ۳. د موقعیت لایر
     loc_value = _normalize_location(data.get("location", ""))

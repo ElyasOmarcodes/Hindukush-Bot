@@ -184,25 +184,72 @@ def _missing_note(done) -> str | None:
 # ─────────────── د موقعیت لاسي کنټرول (شیشه‌یي منو) ───────────────
 # جیمنای موقعیت پخپله ټاکي، خو ځینې وخت یې سم نه ټاکي. د پکیج د نتیجې سره یوه
 # شیشه‌یي منو ورکوو چې کارونکی یې په یوه کلیک بدل کړي — انځورونه بیا جوړیږي.
+# ⚠️ د ټلګرام **Bot API** د شیشه‌یي بټن رنګ ټاکلو کومه لار نه لري — د بټن
+# شالید د کارونکي د تمې (theme) دی. (هغه رنګین بټنې چې په ځینو چینلونو کې
+# لیدل کیږي، د ټلګرام د **Web-App/لینک** بټنې دي، نه د بوټ عادي بټنې.)
+# نو رنګ د **ایموجي** له لارې ورکوو — دا هغه معیاري لار ده چې بوټونه یې کاروي،
+# او عرض هم نه زیاتوي.
 LOCATION_CHOICES = [
-    ("auto", "اتومات"),
-    ("Afghanistan", "افغانستان"),
-    ("Region", "سیمه"),
-    ("Middle East", "منځنی ختیځ"),
-    ("World", "نړۍ"),
+    ("auto", "🟢", "اتومات"),
+    ("Afghanistan", "🇦🇫", "افغانستان"),
+    ("Region", "🟠", "سیمه"),
+    ("Middle East", "🟡", "منځنی ختیځ"),
+    ("World", "🔵", "نړۍ"),
 ]
-LOCATION_LABELS = dict(LOCATION_CHOICES)
+LOCATION_LABELS = {v: name for v, _e, name in LOCATION_CHOICES}
+_LOCATION_ICONS = {v: e for v, e, _n in LOCATION_CHOICES}
 
 
 def location_keyboard(active: str = "auto") -> InlineKeyboardMarkup:
-    """د موقعیت شیشه‌یي منو — روان انتخاب ✅ نښه لري."""
+    """د موقعیت شیشه‌یي منو — لنډ (دوه کرښې) او رنګین.
+
+    ⚠️ روان انتخاب د خپل رنګ-ایموجي **پرځای** ✅ اخلي (نه ورسره). که یې
+    ورسره اضافه کړو، بټن پراخیږي او متن یې پرې کیږي.
+    """
     def btn(value: str) -> InlineKeyboardButton:
-        mark = "✅ " if value == active else ""
-        return InlineKeyboardButton(mark + LOCATION_LABELS[value],
+        icon = "✅" if value == active else _LOCATION_ICONS[value]
+        return InlineKeyboardButton(f"{icon} {LOCATION_LABELS[value]}",
                                     callback_data=f"loc:{value}")
-    # ⚠️ هر بټن خپله کرښه لري — دوه-ستنیز ترتیب ناهموار و («سیمه» لنډه،
-    # «منځنی ختیځ» اوږده)، او په مبایل کې یې وهل ستونزمن و.
-    return InlineKeyboardMarkup([[btn(v)] for v, _ in LOCATION_CHOICES])
+    return InlineKeyboardMarkup([
+        [btn("auto"), btn("Afghanistan"), btn("Region")],
+        [btn("Middle East"), btn("World")],
+    ])
+
+
+# ─────────────── د انځور ځیرک کرپ (اختیاري) ───────────────
+# د خبر قالب ۵:۴ انځور غواړي. ډیفالټ: انځور غزول کیږي (هیڅ نه پرې کیږي).
+# که کارونکی وغواړي، ځیرک کرپ د ۵:۴ **تر ټولو لوی** مستطیل مومي چې اصلي
+# سوژه (خلک/تفصیل) پکې پاتې شي.
+def crop_keyboard(active: bool) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(("✅" if not active else "⬜") + " اصلي",
+                             callback_data="crop:off"),
+        InlineKeyboardButton(("✅" if active else "✂️") + " ځیرک کرپ ۵:۴",
+                             callback_data="crop:on"),
+    ]])
+
+
+def _crop_text(active: bool) -> str:
+    return ("✂️ انځور به د *۵:۴* ځیرک کرپ شي — سوژه پکې پاتې کیږي."
+            if active else
+            "🖼 انځور *لکه اصل* کارول کیږي (ډیفالټ). د ۵:۴ کرپ لپاره بټن ووهئ.")
+
+
+async def show_crop_menu(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
+                         reply_to: int | None) -> None:
+    """د انځور تر څنګ د کرپ بټنې وښیه (د انځور پیغام ته ریپلای)."""
+    state = _state(context)
+    try:
+        m = await context.bot.send_message(
+            chat_id, _crop_text(state.smart_crop),
+            reply_markup=crop_keyboard(state.smart_crop),
+            reply_to_message_id=reply_to, parse_mode="Markdown",
+        )
+    except Exception as err:  # noqa: BLE001 - د کرپ منو حیاتي نه ده
+        logger.debug("د کرپ منو: %s", err)
+        return
+    state.crop_msg_id = m.message_id
+    _track(state, m.message_id)
 
 
 def _location_text(active: str, detected: str) -> str:
@@ -586,6 +633,21 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     data = q.data or ""
     state = _state(context)
 
+    if data.startswith("crop:"):
+        want = data == "crop:on"
+        if want == state.smart_crop:
+            await q.answer("دمخه همدا ټاکل شوی دی")
+            return
+        state.smart_crop = want
+        await q.answer("✂️ ځیرک کرپ فعال شو" if want else "🖼 اصلي انځور")
+        try:
+            await q.edit_message_text(_crop_text(want),
+                                      reply_markup=crop_keyboard(want),
+                                      parse_mode="Markdown")
+        except Exception:  # noqa: BLE001
+            pass
+        return
+
     if data.startswith("loc:"):
         value = data[4:]
         if value not in LOCATION_LABELS:
@@ -720,6 +782,7 @@ async def run_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None
 
         await prog.step(1)  # جیمنای
         data = await gemini.analyze(texts, state.config)
+        data["smart_crop"] = state.smart_crop     # د بیا-جوړولو لپاره هم پاتې شي
         (pkg_dir / "result.json").write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
