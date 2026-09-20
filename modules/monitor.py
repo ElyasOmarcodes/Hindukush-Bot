@@ -111,6 +111,15 @@ async def _add_image(context, state: BotState, msg) -> None:
         await react(context, msg.chat_id, msg.message_id, state.config.reaction_reject)
         return
 
+    # ⚠️ د کرپ بټنې **تر هر څه مخکې** ښیو — سمدلاسه چې انځور راشي.
+    # پخوا تر ټولو وروستۍ وې، نو تر دې مخکې به دا ټول تللي وو:
+    #   get_file → download_to_drive (لوی فایل، څو ثانیې) → ری‌اکشن →
+    #   د شمېرې پیغام (لیږل + ړنګول = ۲ کاله، هر یو د نرخ-محدودوونکي له امله ~۳s)
+    # پایله: بټنې ۵–۱۰ ثانیې ناوخته راښکاره کېدې او کارونکي پام نه ورته کېده.
+    # د کرپ پریکړه په ښکته کولو پورې هیڅ اړه نلري، نو دلته یې ځای دی.
+    if state.mode == "news":
+        await show_crop_menu(context, msg.chat_id, msg.message_id)
+
     # تر ټولو لوړ کیفیت نسخه واخله (photo[-1]) یا د document اصلي فایل.
     ensure_dirs(state.config.pending_dir)
     pending_path = Path(state.config.pending_dir) / f"{msg.message_id}.jpg"
@@ -132,9 +141,6 @@ async def _add_image(context, state: BotState, msg) -> None:
     logger.info("پیغام #%d → بفر (انځور) — توکی %d", msg.message_id, index + 1)
     await react_ordered(context, state, msg.chat_id, msg.message_id, index)
     await refresh_count(context, msg.chat_id)
-    # د خبر قالب ۵:۴ غواړي — کارونکي ته د ځیرک کرپ انتخاب ورکوو (ډیفالټ: نه).
-    if state.mode == "news":
-        await show_crop_menu(context, msg.chat_id, msg.message_id)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

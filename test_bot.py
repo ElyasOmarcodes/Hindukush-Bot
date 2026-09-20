@@ -2702,3 +2702,99 @@ def test_smart_crop_flag_travels_with_the_package_data(tmp_path):
             "smart_crop": True}
     out = render_one(lg, data, str(photo), tmp_path, cfg)
     assert out.exists()
+
+
+def test_crop_buttons_appear_before_the_slow_download():
+    """⚠️ regression: بټنې د انځور تر راتګ ۵–۱۰ ثانیې وروسته ښکارېدې.
+
+    لامل: په `_add_image` کې تر ټولو وروستۍ وې، نو تر دې مخکې به دا ټول تللي
+    وو — get_file → download_to_drive (لوی فایل) → ری‌اکشن → د شمېرې پیغام
+    (لیږل + ړنګول، هر یو د نرخ-محدودوونکي له امله ~۳s). د کرپ پریکړه په
+    ښکته کولو پورې هیڅ اړه نلري، نو باید **لومړی** وښودل شي.
+    """
+    import asyncio
+    from modules import monitor
+
+    order = []
+    state = _state()
+    state.mode = "news"
+
+    class _File:
+        async def download_to_drive(self, path):
+            order.append("download")
+            Path(path).write_bytes(b"\xff\xd8\xff")
+
+    class _Photo:
+        async def get_file(self):
+            order.append("get_file")
+            return _File()
+
+    class _Msg:
+        photo = [_Photo()]
+        document = None
+        chat_id = 5
+        message_id = 42
+
+    async def fake_crop(context, chat_id, reply_to):
+        order.append("crop_menu")
+
+    async def fake_react(*a, **k):
+        order.append("react")
+        return True
+
+    async def fake_count(*a, **k):
+        order.append("count")
+
+    olds = (monitor.show_crop_menu, monitor.react_ordered, monitor.refresh_count)
+    monitor.show_crop_menu, monitor.react_ordered, monitor.refresh_count = (
+        fake_crop, fake_react, fake_count)
+    try:
+        asyncio.run(monitor._add_image(None, state, _Msg()))
+    finally:
+        (monitor.show_crop_menu, monitor.react_ordered,
+         monitor.refresh_count) = olds
+
+    assert order[0] == "crop_menu", f"بټنې لومړی نه دي: {order}"
+    assert order.index("crop_menu") < order.index("download")
+    assert state.counts() == (1, 0)
+
+
+def test_crop_menu_is_skipped_for_urgent_and_quote():
+    """عاجل/نقل قول د خبر قالب نه کاروي — د کرپ بټنو ته اړتیا نشته."""
+    import asyncio
+    from modules import monitor
+
+    for mode in ("urgent", "quote"):
+        shown = []
+        state = _state()
+        state.mode = mode
+
+        class _File:
+            async def download_to_drive(self, path):
+                Path(path).write_bytes(b"\xff\xd8\xff")
+
+        class _Photo:
+            async def get_file(self):
+                return _File()
+
+        class _Msg:
+            photo = [_Photo()]
+            document = None
+            chat_id = 5
+            message_id = 43
+
+        async def fake_crop(*a, **k):
+            shown.append(mode)
+
+        async def noop(*a, **k):
+            return True
+
+        olds = (monitor.show_crop_menu, monitor.react_ordered, monitor.refresh_count)
+        monitor.show_crop_menu = fake_crop
+        monitor.react_ordered = monitor.refresh_count = noop
+        try:
+            asyncio.run(monitor._add_image(None, state, _Msg()))
+        finally:
+            (monitor.show_crop_menu, monitor.react_ordered,
+             monitor.refresh_count) = olds
+        assert not shown, f"د «{mode}» حالت کې د کرپ بټنې ښودل شوې"
