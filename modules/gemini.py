@@ -8,13 +8,13 @@ and parses the JSON reply robustly.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
 import time
 from datetime import datetime, timedelta, timezone
 from itertools import permutations
-
 from pathlib import Path
 
 from .config import Config
@@ -439,10 +439,43 @@ class QuotaTracker:
         # د پرله‌پسې ورووالي شمېر — هر ځل کولډاون دوه برابره شي (۴۵s، ۹۰s، …).
         # نه‌نو یو تل-ورو مډل هره دوره ۱۲ ثانیې خوري.
         self._slow_strikes: dict[str, int] = {}
+        # ⚠️ **مړې کیلۍ** — هغه چې Google بلاک/لغوه کړې (API_KEY_INVALID،
+        # PERMISSION_DENIED …). دا د کوټې ستونزه نه ده: هیڅکله پخپله سمه نه شي،
+        # نو تر لاسي چک پورې بیخي له پامه غورځول کیږي.
+        #
+        # ⚠️ د **اثر-ګوتې** پر بنسټ یې ساتو، نه د ترتیب (#۱، #۲…). لامل: کارونکی
+        # د Railway په متغیر کې کیلۍ زیاتوي/لرې کوي، نو ترتیب ښویږي — او یوه
+        # زوړ «مړ #۲» به یوې **نوې سمې** کیلي ته لګېده.
+        self._dead: dict[str, str] = {}
         # د ډیسک فایل — که ورکړل شي، هر بدلون خوندي کیږي (د بیا-پیل لپاره).
         self._path: Path | None = None
 
+    # ─────────── مړې (بلاک شوې) کیلۍ ───────────
+
+    @staticmethod
+    def fingerprint(api_key: str) -> str:
+        """د کیلي لنډه، بې-زیانه پیژندنه — بشپړه کیلي هیڅکله نه ساتو/نه لاګوو."""
+        return hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:12]
+
+    def mark_dead(self, api_key: str, reason: str) -> None:
+        self._dead[self.fingerprint(api_key)] = reason
+        self._save()
+
+    def mark_alive(self, api_key: str) -> None:
+        if self._dead.pop(self.fingerprint(api_key), None) is not None:
+            self._save()
+
+    def is_dead(self, api_key: str) -> bool:
+        return self.fingerprint(api_key) in self._dead
+
+    def dead_reason(self, api_key: str) -> str:
+        return self._dead.get(self.fingerprint(api_key), "")
+
+    def dead_count(self) -> int:
+        return len(self._dead)
+
     def clear(self) -> None:
+        self._dead.clear()
         self._until.clear()
         self._reason.clear()
         self._model_until.clear()
@@ -516,6 +549,7 @@ class QuotaTracker:
                 self._model_reason[item["model"]] = item.get("reason", "")
                 loaded += 1
         self._slow_strikes.update({k: int(v) for k, v in (data.get("slow") or {}).items()})
+        self._dead.update({k: str(v) for k, v in (data.get("dead") or {}).items()})
         if loaded:
             logger.info("د کوټې حافظه له ډیسک بیرته ولوستل شوه — %d بندښتونه", loaded)
 
@@ -534,6 +568,7 @@ class QuotaTracker:
                 for m, u in self._model_until.items() if u > now
             ],
             "slow": self._slow_strikes,
+            "dead": self._dead,
         }
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -615,6 +650,89 @@ class QuotaTracker:
         return out
 
 
+# ─────────────── د کیلیانو ریښتینی چک (/keys) ───────────────
+# ⚠️ ولې دا پکار دی: کله چې Google یوه کیلي بلاک کړي، هغه **هیڅکله** پخپله
+# سمه نه شي — خو cascade یې بیا هم د هر مډل لپاره یو ځل ازمویله. د ۸ مډلونو
+# سره، یوه مړه کیلي په هره دوره کې ۸ ناکام کالونه (څو ثانیې) خوري.
+#
+# دا چک **ریښتینی** دی: هره کیلي یو واقعي `generate_content` کال کوي — همغه
+# لار چې رباټ یې کاروي. `models.list()` به ارزانه وای، خو هغه ښایي بریالی شي
+# حال دا چې د متن جوړولو اجازه بنده وي.
+
+# د چک لپاره تر ټولو ارزانه مډل + تر ټولو لنډ پرامپټ (څو توکن).
+_CHECK_PROMPT = "hi"
+_CHECK_TIMEOUT = 15.0
+
+# هغه نښې چې «کیلي پخپله بلاک/ناسمه ده» ښیي — نه کوټه، نه لنډمهاله ستونزه.
+_DEAD_MARKERS = (
+    "API_KEY_INVALID", "PERMISSION_DENIED", "UNAUTHENTICATED",
+    "API KEY NOT VALID", "CONSUMER_SUSPENDED", "ACCESS_TOKEN_EXPIRED",
+    "SERVICE_DISABLED", "BILLING", "FORBIDDEN",
+)
+
+
+def _is_dead_key_error(err: Exception) -> bool:
+    text = str(err).upper().replace("-", "_")
+    return any(m in text for m in _DEAD_MARKERS)
+
+
+async def _check_one(api_key: str, model: str) -> tuple[str, str]:
+    """یوه کیلي وازموه — («ok»|«dead»|«quota»|«error»، تفصیل) راګرځوي."""
+    from google import genai
+
+    try:
+        client = genai.Client(api_key=api_key)
+        resp = await asyncio.wait_for(
+            client.aio.models.generate_content(model=model, contents=_CHECK_PROMPT),
+            timeout=_CHECK_TIMEOUT,
+        )
+        return ("ok", "") if (resp.text or "").strip() else ("error", "خالي ځواب")
+    except (asyncio.TimeoutError, TimeoutError):
+        return "error", f"وخت تېر شو (>{_CHECK_TIMEOUT:.0f}s)"
+    except Exception as err:  # noqa: BLE001 - هره خطا باید ډلبندي شي
+        if _is_dead_key_error(err):
+            return "dead", str(err).split("\n")[0][:120]
+        if _is_quota(err):
+            return "quota", "کوټه/لیمیټ"
+        return "error", str(err).split("\n")[0][:120]
+
+
+async def check_keys(config: Config) -> list[dict]:
+    """ټولې کیلۍ **په حقیقي ډول** وازموه او مړې یې ونښلوه.
+
+    دا یوه بشپړه بیا-همغږي ده: هغه کیلي چې پخوا مړه ګڼل کېده خو اوس کار کوي،
+    بیرته فعالیږي. د هرې کیلي پایله یوه قاموس ده:
+      ``{"index", "hint", "state", "detail", "seconds"}``
+    """
+    keys = config.gemini_api_keys
+    if not keys:
+        return []
+    # تر ټولو ارزانه (اخري) مډل — د چک لپاره قوي مډل ته اړتیا نشته.
+    model = config.gemini_models[-1] if config.gemini_models else "gemini-2.5-flash-lite"
+
+    async def one(idx: int, key: str) -> dict:
+        started = time.monotonic()
+        state, detail = await _check_one(key, model)
+        if state == "dead":
+            quota.mark_dead(key, detail)
+            logger.warning("کیلي #%d بلاکه ده — له نظره وغورځول شوه: %s", idx, detail)
+        elif state in ("ok", "quota"):
+            # کوټه د کیلي ستونزه نه ده — کیلي ژوندۍ ده.
+            if quota.is_dead(key):
+                logger.info("کیلي #%d بیرته فعاله شوه", idx)
+            quota.mark_alive(key)
+        return {
+            "index": idx,
+            "hint": f"…{key[-4:]}" if len(key) > 4 else "…",
+            "state": state,
+            "detail": detail,
+            "seconds": time.monotonic() - started,
+        }
+
+    # ⚠️ ټولې کیلۍ **یوځای** ازمویو — ۶ کیلۍ پرله‌پسې ۹۰ ثانیې نیسي.
+    return list(await asyncio.gather(*(one(i + 1, k) for i, k in enumerate(keys))))
+
+
 # د پروسس په اوږدو کې یوه ګډه حافظه.
 quota = QuotaTracker()
 
@@ -642,7 +760,18 @@ async def _cascade(prompt: str, config: Config) -> str:
     # وارد کول دلته کوو چې د یونټ-ټیسټ پر مهال google-genai ته اړتیا نه وي.
     from google import genai
 
-    clients = [(i + 1, genai.Client(api_key=k)) for i, k in enumerate(config.gemini_api_keys)]
+    # ⚠️ مړې (بلاک شوې) کیلۍ بیخي نه جوړوو — نه‌نو **هر مډل** یې یو ځل ازمویه
+    # او هره دوره یې څو ثانیې ضایع کولې. (د `/keys` دستور یې ټاکي.)
+    live = [(i + 1, k) for i, k in enumerate(config.gemini_api_keys)
+            if not quota.is_dead(k)]
+    dead = len(config.gemini_api_keys) - len(live)
+    if not live:
+        raise RuntimeError(
+            f"ټولې {dead} کیلۍ بلاک شوې دي. نوې کیلۍ ورزیاتې کړه، بیا /keys ووهه."
+        )
+    if dead:
+        logger.info("%d بلاک شوې کیلۍ پرېښودل شوې — %d فعالې", dead, len(live))
+    clients = [(idx, genai.Client(api_key=k)) for idx, k in live]
     timeout = float(getattr(config, "gemini_timeout", 12.0) or 12.0)
     last_error: Exception | None = None
     tried = 0

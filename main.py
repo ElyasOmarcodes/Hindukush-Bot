@@ -35,6 +35,7 @@ BOT_COMMANDS = [
     BotCommand("start", "منو پرانیستل 🛠"),
     BotCommand("menu", "منو پرانیستل 🛠"),
     BotCommand("status", "اوسنی حالت"),
+    BotCommand("keys", "د API کیلیانو چک 🔑"),
     BotCommand("help", "مرسته"),
 ]
 
@@ -112,6 +113,7 @@ def build_application(config: Config) -> Application:
     app.add_handler(CommandHandler("cnl", commands.cmd_cnl, filters=chat_filter))
     app.add_handler(CommandHandler("clean", commands.cmd_clean, filters=chat_filter))
     app.add_handler(CommandHandler("status", commands.cmd_status, filters=chat_filter))
+    app.add_handler(CommandHandler("keys", commands.cmd_keys, filters=chat_filter))
     app.add_handler(CommandHandler("help", commands.cmd_help, filters=chat_filter))
     app.add_handler(CallbackQueryHandler(commands.on_callback))
 

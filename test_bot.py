@@ -2450,17 +2450,15 @@ def test_location_keyboard_has_five_choices_with_auto_default():
     from modules import commands
     from modules.design.layout import VALID_LOCATIONS
 
-    values = [v for v, _e, _n in commands.LOCATION_CHOICES]
+    values = [v for v, _n in commands.LOCATION_CHOICES]
     assert values == ["auto", *VALID_LOCATIONS], values
     rows = commands.location_keyboard().inline_keyboard
     # لنډ ترتیب — یوازې دوه کرښې (پخوا ۵ کرښې وې او ډیر ځای یې نیوه).
     assert len(rows) == 2 and [len(r) for r in rows] == [3, 2]
     labels = [b.text for row in rows for b in row]
-    assert labels[0].startswith("✅"), "اتومات باید ډیفالټ ټاکل شوی وي"
-    assert [l.split(" ", 1)[1] for l in labels] == [
+    assert labels[0] == "«اتومات»", "اتومات باید ډیفالټ ټاکل شوی وي"
+    assert [l.strip("«»") for l in labels] == [
         "اتومات", "افغانستان", "سیمه", "منځنی ختیځ", "نړۍ"]
-    # هر نا-فعال بټن خپل رنګ-ایموجي لري (ټلګرام د بټن رنګ نه مني).
-    assert all(l.split(" ", 1)[0] for l in labels)
     data = [b.callback_data for row in rows for b in row]
     assert data == ["loc:auto", "loc:Afghanistan", "loc:Region",
                     "loc:Middle East", "loc:World"]
@@ -2471,8 +2469,8 @@ def test_location_keyboard_has_five_choices_with_auto_default():
 def test_location_keyboard_marks_the_active_choice():
     from modules import commands
     kb = commands.location_keyboard("Region")
-    marked = [b.text for row in kb.inline_keyboard for b in row if b.text.startswith("✅")]
-    assert marked == ["✅ سیمه"]
+    marked = [b.text for row in kb.inline_keyboard for b in row if b.text.startswith("«")]
+    assert marked == ["«سیمه»"]
 
 
 def test_location_callback_rerenders_with_the_chosen_value(tmp_path):
@@ -2798,3 +2796,132 @@ def test_crop_menu_is_skipped_for_urgent_and_quote():
             (monitor.show_crop_menu, monitor.react_ordered,
              monitor.refresh_count) = olds
         assert not shown, f"د «{mode}» حالت کې د کرپ بټنې ښودل شوې"
+
+
+# ---------- د API کیلیانو ریښتینی چک (/keys) ----------
+
+def test_dead_key_errors_are_told_apart_from_quota():
+    """بلاکه کیلي ≠ کوټه ختمه. لومړۍ هیڅکله پخپله نه سمیږي، دویمه سبا سمیږي."""
+    from modules import gemini
+    for text in ("400 INVALID_ARGUMENT: API key not valid",
+                 "403 PERMISSION_DENIED", "CONSUMER_SUSPENDED",
+                 "403 SERVICE_DISABLED for project"):
+        assert gemini._is_dead_key_error(Exception(text)), text
+    for text in ("429 RESOURCE_EXHAUSTED: quota exceeded",
+                 "503 UNAVAILABLE: model overloaded"):
+        assert not gemini._is_dead_key_error(Exception(text)), text
+        assert gemini._is_quota(Exception(text))
+
+
+def test_dead_keys_are_remembered_by_fingerprint_not_position():
+    """⚠️ مهم: د ترتیب (#۱، #۲…) پر بنسټ ساتل خطرناک دي.
+
+    کارونکی د Railway په متغیر کې کیلۍ زیاتوي/لرې کوي، نو ترتیب ښویږي — او یو
+    زوړ «مړ #۲» به یوې **نوې سمې** کیلي ته لګېده.
+    """
+    from modules.gemini import QuotaTracker
+    q = QuotaTracker()
+    q.mark_dead("KEY-B", "API_KEY_INVALID")
+    assert q.is_dead("KEY-B") and q.dead_reason("KEY-B") == "API_KEY_INVALID"
+    assert not q.is_dead("KEY-A") and not q.is_dead("KEY-C")
+    # ترتیب بدل شو — «KEY-B» لا هم مړه ده، نورې بې اغیزې.
+    for k in ("KEY-C", "KEY-A", "KEY-NEW"):
+        assert not q.is_dead(k)
+    q.mark_alive("KEY-B")
+    assert not q.is_dead("KEY-B") and q.dead_count() == 0
+
+
+def test_fingerprint_never_leaks_the_key():
+    from modules.gemini import QuotaTracker
+    secret = "AIzaSy-super-secret-key-value"
+    fp = QuotaTracker.fingerprint(secret)
+    assert secret not in fp and len(fp) == 12
+    assert fp == QuotaTracker.fingerprint(secret)          # ثابته ده
+    assert fp != QuotaTracker.fingerprint(secret + "x")
+
+
+def test_dead_keys_survive_a_restart(tmp_path):
+    from modules.gemini import QuotaTracker
+    path = tmp_path / "quota.json"
+    q = QuotaTracker()
+    q.attach(path)
+    q.mark_dead("KEY-X", "PERMISSION_DENIED")
+    fresh = QuotaTracker()
+    fresh.attach(path)
+    assert fresh.is_dead("KEY-X"), "مړه کیلي باید د بیا-پیل وروسته هم یاده وي"
+    assert not fresh.is_dead("KEY-Y")
+
+
+def test_check_keys_marks_dead_and_revives(monkeypatch):
+    """`/keys` یوه بشپړه بیا-همغږي ده — مړه نښلوي، سمه بیرته ژوندۍ کوي."""
+    import asyncio
+    from modules import gemini
+
+    cfg = load_config("config/settings.json")
+    cfg.gemini_api_keys = ["GOOD", "BLOCKED", "LIMITED"]
+    gemini.quota.clear()
+    gemini.quota.mark_dead("GOOD", "زړه پریکړه")      # پخوا مړه ګڼل شوې وه
+
+    async def fake_check(api_key, model):
+        return {"GOOD": ("ok", ""), "BLOCKED": ("dead", "API_KEY_INVALID"),
+                "LIMITED": ("quota", "کوټه/لیمیټ")}[api_key]
+
+    monkeypatch.setattr(gemini, "_check_one", fake_check)
+    out = asyncio.run(gemini.check_keys(cfg))
+
+    assert [r["state"] for r in out] == ["ok", "dead", "quota"]
+    assert [r["index"] for r in out] == [1, 2, 3]
+    assert not gemini.quota.is_dead("GOOD"), "سمه کیلي باید بیرته ژوندۍ شي"
+    assert gemini.quota.is_dead("BLOCKED")
+    assert not gemini.quota.is_dead("LIMITED"), "کوټه د کیلي ستونزه نه ده"
+    assert all(r["hint"].startswith("…") for r in out), "بشپړه کیلي مه ښیه"
+    gemini.quota.clear()
+
+
+def test_check_keys_runs_all_keys_in_parallel(monkeypatch):
+    """۶ کیلۍ پرله‌پسې ~۹۰ ثانیې نیسي — باید یوځای وازمویل شي."""
+    import asyncio, time
+    from modules import gemini
+
+    cfg = load_config("config/settings.json")
+    cfg.gemini_api_keys = [f"K{i}" for i in range(6)]
+    gemini.quota.clear()
+
+    async def slow(api_key, model):
+        await asyncio.sleep(0.15)
+        return "ok", ""
+
+    monkeypatch.setattr(gemini, "_check_one", slow)
+    t = time.perf_counter()
+    out = asyncio.run(gemini.check_keys(cfg))
+    elapsed = time.perf_counter() - t
+    assert len(out) == 6
+    assert elapsed < 0.5, f"{elapsed:.2f}s — پرله‌پسې ازمویل کیږي"
+    gemini.quota.clear()
+
+
+def test_cascade_refuses_early_when_every_key_is_dead():
+    """که ټولې کیلۍ بلاکې وي، cascade باید سمدلاسه ووایي — نه هر مډل وازموي."""
+    import asyncio
+    from modules import gemini
+
+    cfg = load_config("config/settings.json")
+    cfg.gemini_api_keys = ["A", "B"]
+    gemini.quota.clear()
+    gemini.quota.mark_dead("A", "x")
+    gemini.quota.mark_dead("B", "y")
+    try:
+        with pytest.raises(RuntimeError) as err:
+            asyncio.run(gemini._cascade("hi", cfg))
+        assert "بلاک" in str(err.value) and "/keys" in str(err.value)
+    finally:
+        gemini.quota.clear()
+
+
+def test_keys_command_is_registered():
+    from modules import commands
+    import main
+    assert hasattr(commands, "cmd_keys")
+    assert "keys" in [c.command for c in main.BOT_COMMANDS]
+    src = Path("main.py").read_text(encoding="utf-8")
+    assert 'CommandHandler("keys", commands.cmd_keys' in src

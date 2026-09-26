@@ -184,32 +184,26 @@ def _missing_note(done) -> str | None:
 # ─────────────── د موقعیت لاسي کنټرول (شیشه‌یي منو) ───────────────
 # جیمنای موقعیت پخپله ټاکي، خو ځینې وخت یې سم نه ټاکي. د پکیج د نتیجې سره یوه
 # شیشه‌یي منو ورکوو چې کارونکی یې په یوه کلیک بدل کړي — انځورونه بیا جوړیږي.
-# ⚠️ د ټلګرام **Bot API** د شیشه‌یي بټن رنګ ټاکلو کومه لار نه لري — د بټن
-# شالید د کارونکي د تمې (theme) دی. (هغه رنګین بټنې چې په ځینو چینلونو کې
-# لیدل کیږي، د ټلګرام د **Web-App/لینک** بټنې دي، نه د بوټ عادي بټنې.)
-# نو رنګ د **ایموجي** له لارې ورکوو — دا هغه معیاري لار ده چې بوټونه یې کاروي،
-# او عرض هم نه زیاتوي.
 LOCATION_CHOICES = [
-    ("auto", "🟢", "اتومات"),
-    ("Afghanistan", "🇦🇫", "افغانستان"),
-    ("Region", "🟠", "سیمه"),
-    ("Middle East", "🟡", "منځنی ختیځ"),
-    ("World", "🔵", "نړۍ"),
+    ("auto", "اتومات"),
+    ("Afghanistan", "افغانستان"),
+    ("Region", "سیمه"),
+    ("Middle East", "منځنی ختیځ"),
+    ("World", "نړۍ"),
 ]
-LOCATION_LABELS = {v: name for v, _e, name in LOCATION_CHOICES}
-_LOCATION_ICONS = {v: e for v, e, _n in LOCATION_CHOICES}
+LOCATION_LABELS = dict(LOCATION_CHOICES)
 
 
 def location_keyboard(active: str = "auto") -> InlineKeyboardMarkup:
-    """د موقعیت شیشه‌یي منو — لنډ (دوه کرښې) او رنګین.
+    """د موقعیت شیشه‌یي منو — لنډ (دوه کرښې)، بې ایموجي.
 
-    ⚠️ روان انتخاب د خپل رنګ-ایموجي **پرځای** ✅ اخلي (نه ورسره). که یې
-    ورسره اضافه کړو، بټن پراخیږي او متن یې پرې کیږي.
+    روان انتخاب په «» کې راځي — نښه متني ده، نو عرض یې نه زیاتوي او د بټنو
+    ښکارېدنه ساده پاتې کیږي.
     """
     def btn(value: str) -> InlineKeyboardButton:
-        icon = "✅" if value == active else _LOCATION_ICONS[value]
-        return InlineKeyboardButton(f"{icon} {LOCATION_LABELS[value]}",
-                                    callback_data=f"loc:{value}")
+        name = LOCATION_LABELS[value]
+        text = f"«{name}»" if value == active else name
+        return InlineKeyboardButton(text, callback_data=f"loc:{value}")
     return InlineKeyboardMarkup([
         [btn("auto"), btn("Afghanistan"), btn("Region")],
         [btn("Middle East"), btn("World")],
@@ -254,8 +248,9 @@ async def show_crop_menu(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
 
 def _location_text(active: str, detected: str) -> str:
     if active == "auto":
-        return f"📍 موقعیت: *اتومات* — جیمنای «{LOCATION_LABELS.get(detected, detected)}» وټاکه"
-    return f"📍 موقعیت: *{LOCATION_LABELS[active]}* (لاسي)"
+        return ("موقعیت: *اتومات* — جیمنای "
+                f"«{LOCATION_LABELS.get(detected, detected)}» وټاکه")
+    return f"موقعیت: *{LOCATION_LABELS[active]}* (لاسي)"
 
 
 async def show_location_menu(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
@@ -494,6 +489,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/cnl — روان عملیات لغوه کړه\n"
         "/clean — بفر پاک کړه\n"
         "/status — اوسنی حالت وښیه\n"
+        "/keys — د Gemini کیلۍ ریښتیا وازموه (بلاکې یې وغورځوه)\n"
         "/help — دا مرسته"
     )
 
@@ -528,13 +524,82 @@ async def cmd_off(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+# د /keys د پایلې نښې — هره کیلي یوه کرښه.
+_KEY_MARKS = {
+    "ok":    ("✅", "سمه ده"),
+    "quota": ("⏳", "کوټه ختمه (کیلي سمه ده)"),
+    "dead":  ("🚫", "بلاکه — له نظره وغورځول شوه"),
+    "error": ("⚠️", "ستونزه"),
+}
+
+
+async def cmd_keys(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """ټولې د Gemini کیلۍ **په حقیقي ډول** وازموه او بلاک شوې یې وغورځوه.
+
+    هره کیلي یو واقعي کال کوي (همغه لار چې رباټ یې کاروي). بلاکه کیلي په
+    حافظه کې نښل کیږي، نو cascade یې بیخي نه ازموي — او د هر مډل لپاره یې
+    ناکام کال نه کوي.
+
+    دا یوه **بشپړه بیا-همغږي** ده: هغه کیلي چې پخوا بلاکه ګڼل کېده خو اوس
+    کار کوي، بیرته فعالیږي. نو د Railway په متغیر کې د نویو کیلیانو تر
+    ورزیاتولو وروسته یوازې /keys ووهه.
+    """
+    state = _state(context)
+    if not _is_authorized(state, update):
+        return
+    msg = update.effective_message
+    keys = state.config.gemini_api_keys
+    if not keys:
+        await msg.reply_text("⚠️ هیڅ کیلي نه ده تنظیم شوې (GEMINI_API_KEYS).")
+        return
+
+    wait = await msg.reply_text(
+        f"🔍 د {fa_digits(len(keys))} کیلیانو ریښتینی چک روان دی…")
+    try:
+        results = await gemini.check_keys(state.config)
+    except Exception as err:  # noqa: BLE001
+        logger.error("د کیلیانو چک ناکام: %s", err, exc_info=True)
+        await wait.edit_text(f"❌ چک ناکام شو: {err}")
+        return
+
+    lines = ["🔑 *د کیلیانو چک*", ""]
+    tally = {"ok": 0, "quota": 0, "dead": 0, "error": 0}
+    for r in results:
+        tally[r["state"]] = tally.get(r["state"], 0) + 1
+        mark, label = _KEY_MARKS.get(r["state"], ("•", r["state"]))
+        line = (f"{mark} #{fa_digits(r['index'])} `{r['hint']}` — {label}"
+                f"  ({r['seconds']:.1f}s)")
+        if r["detail"] and r["state"] in ("dead", "error"):
+            line += f"\n     ↳ _{r['detail']}_"
+        lines.append(line)
+
+    live = tally["ok"] + tally["quota"]
+    lines += ["", f"📊 فعالې: *{fa_digits(live)}* / {fa_digits(len(results))}"]
+    if tally["dead"]:
+        lines.append(f"🚫 بلاکې: *{fa_digits(tally['dead'])}* — نور نه ازمویل کیږي.")
+    if live == 0:
+        lines.append("\n⚠️ هیڅ فعاله کیلي نشته — نوې ورزیاته کړه، بیا /keys ووهه.")
+
+    logger.info("د کیلیانو چک: %d فعالې، %d بلاکې، %d ستونزمنې",
+                live, tally["dead"], tally["error"])
+    try:
+        await wait.edit_text("\n".join(lines), parse_mode="Markdown")
+    except Exception:  # noqa: BLE001 - Markdown ښایي ماته شي
+        await wait.edit_text("\n".join(lines).replace("*", "").replace("`", "")
+                             .replace("_", ""))
+
+
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     state = _state(context)
     imgs, txts = state.counts()
     mode = "فعال 👂" if state.listening else "غیر فعال 🔇"
     # د کوټې کولډاون — کوم مډل/کیلي اوس پرېښودل کیږي او تر کله.
     blocked = gemini.quota.status()
+    dead = gemini.quota.dead_count()
     quota_line = ""
+    if dead:
+        quota_line += (f"\n\n🚫 {fa_digits(dead)} بلاکې کیلۍ له نظره غورځول "
+                       "شوې — د بیا-چک لپاره /keys ووهه.")
     if blocked:
         quota_line = "\n\n🚦 د کوټې کولډاون:\n" + "\n".join(f"• {b}" for b in blocked[:6])
         if len(blocked) > 6:
