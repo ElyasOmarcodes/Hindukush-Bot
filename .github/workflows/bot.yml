@@ -1,0 +1,100 @@
+name: Hindukush-Bot CI & Run
+
+on:
+  push:
+  workflow_dispatch:
+
+# Only one bot run may be alive at a time. A new push cancels the previous
+# long-running bot job, so Telegram never sees two pollers at once (which
+# would cause a 409 "getUpdates conflict").
+concurrency:
+  group: hindukush-bot
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test bot
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: Run tests
+        run: pytest -v
+
+  run-bot:
+    name: Run bot
+    needs: test
+    # ⚠️ رباټ اوس په Railway کې چلیږي. که دا jobپه هر push پیل شي، دوهم poller
+    # جوړیږي او ټلګرام 409 "getUpdates conflict" ورکوي — یعنې د Railway رباټ
+    # ماتیږي. نو دا job **یوازې په لاسي (Run workflow) چلیږي**، نه په push.
+    # Manual-only: the live bot runs on Railway; an automatic run here would be
+    # a second poller on the same token and would break it.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    # GitHub Actions caps a single job at 6 hours (360 min). We run the bot
+    # for as long as the platform allows so it stays alive during the session.
+    timeout-minutes: 350
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Check that the required secrets are configured
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+        run: |
+          if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
+            echo "::error::TELEGRAM_BOT_TOKEN secret is not set."
+            echo "Add it under Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          echo "TELEGRAM_BOT_TOKEN secret is present."
+          if [ -z "$GEMINI_API_KEYS" ]; then
+            echo "::warning::GEMINI_API_KEYS secret is not set — /cmp analysis will fail until it is added."
+          else
+            echo "GEMINI_API_KEYS secret is present."
+          fi
+
+      - name: Run NewsBot (polling)
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_GROUP_ID: ${{ secrets.TELEGRAM_GROUP_ID }}
+          ADMIN_USER_IDS: ${{ secrets.ADMIN_USER_IDS }}
+          GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
+          PYTHONUNBUFFERED: "1"
+        run: |
+          echo "Starting bot. It will run until the job timeout is reached."
+          # Run the bot for up to ~5h50m. `timeout` returns 124 when it stops
+          # the process on time, which we treat as a successful, clean run.
+          set +e
+          timeout 350m python -u main.py
+          code=$?
+          echo "Bot process exited with code ${code}."
+          if [ "${code}" -eq 124 ]; then
+            echo "Bot ran for the full allotted time and was stopped by timeout."
+            exit 0
+          fi
+          exit "${code}"
