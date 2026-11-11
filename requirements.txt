@@ -1,0 +1,13 @@
+# ⚠️ د RTL (پښتو/فارسي) شکل‌ورکول Pillow-raqm ته اړتیا لري.
+# د Pillow رسمي wheelونه راقم او harfbuzz **دننه** لري، خو **fribidi نه** —
+# راقم یې د چلولو پر مهال په dlopen("libfribidi.so.0") لټوي. نو د کوربه انځور
+# باید `libfribidi0` ولري، نه‌نو هر ډیزاین ماتیږي:
+#     KeyError: ... not supported without libraqm
+# د مخزن Dockerfile دا نصبوي او د جوړولو پر مهال یې چک کوي.
+# Pillow wheels vendor raqm+harfbuzz but dlopen libfribidi.so.0 at runtime —
+# the host image must provide libfribidi0.
+python-telegram-bot[all]>=21.0
+google-genai>=0.3.0
+Pillow>=10.4.0
+python-dotenv>=1.0.0
+persiantools>=3.0.0
