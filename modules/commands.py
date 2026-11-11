@@ -346,6 +346,39 @@ async def _restore_menu(context: ContextTypes.DEFAULT_TYPE, chat_id: int,
             pass
 
 
+# ⚠️ **ولې شالید پکار دی.** رباټ یوازې **یو** اپډیټ په یوه وخت کې پروسس کوي
+# (`max_concurrent_updates = 1`). او د PTB نرخ-محدودوونکی هغه کالونه ځنډوي چې
+# `chat_id` لري — `editMessageText` یې لري (~۳s په کتار کې)، خو
+# `answerCallbackQuery` یې **نه** لري (سمدلاسه ځي).
+#
+# نو که د بټن اداره‌کوونکی پر `edit_message_text` انتظار وکړي، هغه ۳–۶ ثانیې
+# **ټوله کتار** بندوي: کارونکی «بشپړول» وهي او رباټ یې تر هغه وخته نه ویني.
+# کارونکي پرحقه ویل چې «بټن کلیک زر اخلي مګر ډیره په ځنډ فعاله کیږي».
+#
+# حل: د بټن حالت سمدلاسه ټاکو، توست سمدلاسه ورکوو، او **د پیغام تازه‌کول** په
+# شالید کې غورځوو — نو اداره‌کوونکی په میلي‌ثانیو کې بیرته راځي.
+_BG_TASKS: set = set()
+
+
+def _fire(coro) -> None:
+    """کار په شالید کې وچلوه — د راتلونکي اپډیټ مخه دې ونه نیسي.
+
+    حواله ساتو، نه‌نو asyncio ښایي تر پای مخکې یې راټوله کړي.
+    """
+    task = asyncio.create_task(coro)
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+
+
+async def _safe_edit(query, text: str, markup) -> None:
+    """د شیشه‌یي پیغام متن/بټنې تازه کړه — ناکامي یې بې زیانه ده."""
+    try:
+        await query.edit_message_text(text, reply_markup=markup,
+                                      parse_mode="Markdown")
+    except Exception as err:  # noqa: BLE001 - پیغام ښایي ړنګ/زوړ وي
+        logger.debug("د شیشه‌یي پیغام تازه‌کول: %s", err)
+
+
 def _track(state: BotState, *message_ids) -> None:
     """د منو د اړیکو پیغام یاد کړه — د بریالۍ دورې وروسته ړنګیږي."""
     for mid in message_ids:
@@ -700,17 +733,16 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if data.startswith("crop:"):
         want = data == "crop:on"
-        if want == state.smart_crop:
-            await q.answer("دمخه همدا ټاکل شوی دی")
-            return
+        # ⚠️ حالت **تر هر await مخکې** ټاکو — نو که کارونکی سمدلاسه «بشپړول»
+        # ووهي، پریکړه یې دمخه ثبت ده.
+        changed = want != state.smart_crop
         state.smart_crop = want
-        await q.answer("✂️ ځیرک کرپ فعال شو" if want else "🖼 اصلي انځور")
-        try:
-            await q.edit_message_text(_crop_text(want),
-                                      reply_markup=crop_keyboard(want),
-                                      parse_mode="Markdown")
-        except Exception:  # noqa: BLE001
-            pass
+        # توست سمدلاسه ښکاري (`answerCallbackQuery` د ګروپ محدودیت نلري).
+        await q.answer("✂️ ځیرک کرپ: هو — «بشپړول» ووهئ" if want
+                       else "🖼 اصلي انځور (بې کرپه)")
+        if changed:
+            # د پیغام تازه‌کول ورو دي → شالید ته یې غورځوو چې کتار بند نشي.
+            _fire(_safe_edit(q, _crop_text(want), crop_keyboard(want)))
         return
 
     if data.startswith("loc:"):
@@ -724,15 +756,12 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if state.processing:
             await q.answer("⏳ یو پروسس روان دی", show_alert=True)
             return
-        await q.answer("⏳ بیا جوړیږي…")
         state.last_location = value
         detected = state.last_detected_location
-        try:
-            await q.edit_message_text(
-                _location_text(value, detected),
-                reply_markup=location_keyboard(value), parse_mode="Markdown")
-        except Exception:  # noqa: BLE001
-            pass
+        await q.answer("⏳ بیا جوړیږي…")
+        # لکه پورته — تازه‌کول ورو دي، نو کتار پرې نه بندوو.
+        _fire(_safe_edit(q, _location_text(value, detected),
+                         location_keyboard(value)))
         err = await _rerender_location(context, q.message.chat_id, value)
         if err:
             try:
@@ -830,10 +859,13 @@ async def run_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None
         return
 
     state.processing = True
+    # ⚠️ د کرپ پریکړه په **سرلیک** کې ښیو. که کارونکی «بشپړول» ډیر ژر ووهي،
+    # دلته سمدلاسه ویني چې کرپ فعال و که نه — نه دا چې تر پای انتظار وکړي.
+    crop_on = state.smart_crop
     prog = Progress(
         context.bot, chat_id,
         min_interval=state.config.design.progress_min_interval,
-        title="📰 خبر",
+        title="📰 خبر · ✂️ کرپ" if crop_on else "📰 خبر",
     )
     note: str | None = None
     purge = False
@@ -847,7 +879,10 @@ async def run_pipeline(context: ContextTypes.DEFAULT_TYPE, chat_id: int) -> None
 
         await prog.step(1)  # جیمنای
         data = await gemini.analyze(texts, state.config)
-        data["smart_crop"] = state.smart_crop     # د بیا-جوړولو لپاره هم پاتې شي
+        # د سرلیک سره عین ارزښت کاروو — نه‌نو سرلیک به یو شی ویلی وای او
+        # ډیزاین به بل کړی وای (که کارونکي پدې منځ کې بټن وهلی وي).
+        data["smart_crop"] = crop_on              # د بیا-جوړولو لپاره هم پاتې شي
+        logger.info("ځیرک کرپ: %s", "هو" if crop_on else "نه")
         (pkg_dir / "result.json").write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
         )

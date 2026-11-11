@@ -2925,3 +2925,131 @@ def test_keys_command_is_registered():
     assert "keys" in [c.command for c in main.BOT_COMMANDS]
     src = Path("main.py").read_text(encoding="utf-8")
     assert 'CommandHandler("keys", commands.cmd_keys' in src
+
+
+# ---------- د کرپ بټن: ځنډ او د «بشپړول» سیالي ----------
+
+class _SlowQuery:
+    """یو شیشه‌یي پوښتنه چې `edit_message_text` یې ورو دی (لکه د نرخ-محدودوونکی)."""
+
+    def __init__(self, data, edit_delay=0.30):
+        self.data = data
+        self._delay = edit_delay
+        self.answered = None
+        self.edited = None
+        self.edit_finished_at = None
+
+        class _M:
+            chat_id = 7
+        self.message = _M()
+
+    async def answer(self, text=None, show_alert=False):
+        self.answered = text
+
+    async def edit_message_text(self, text, reply_markup=None, parse_mode=None):
+        import asyncio, time
+        await asyncio.sleep(self._delay)
+        self.edited = text
+        self.edit_finished_at = time.perf_counter()
+
+
+def _callback_ctx(state):
+    class _Ctx:
+        class application:
+            bot_data = {"state": state}
+    return _Ctx()
+
+
+def test_crop_toggle_does_not_block_the_update_queue():
+    """⚠️ regression: اداره‌کوونکی د پیغام پر تازه‌کولو ۳–۶ ثانیې انتظار کاوه.
+
+    رباټ یوازې **یو** اپډیټ په یوه وخت کې پروسس کوي، نو هغه ټوله کتار بندوله —
+    کارونکی «بشپړول» وهه او رباټ یې تر هغه وخته نه لیده. اوس تازه‌کول شالید ته
+    غورځول کیږي، نو اداره‌کوونکی سمدلاسه بیرته راځي.
+    """
+    import asyncio, time
+    from modules import commands
+
+    state = _state()
+    q = _SlowQuery("crop:on", edit_delay=0.30)
+
+    class _Upd:
+        callback_query = q
+
+    async def run():
+        t0 = time.perf_counter()
+        await commands.on_callback(_Upd(), _callback_ctx(state))
+        handler_ms = (time.perf_counter() - t0) * 1000
+        assert handler_ms < 100, f"اداره‌کوونکی {handler_ms:.0f}ms بند و"
+        assert state.smart_crop is True, "حالت باید سمدلاسه ټاکل شوی وي"
+        assert q.answered, "توست باید سمدلاسه ورکړل شي"
+        assert q.edited is None, "تازه‌کول باید لا روان وي (شالید)"
+        await asyncio.sleep(0.45)                 # شالید دې پای ته ورسیږي
+        assert q.edited is not None, "شالیدي تازه‌کول پای ته ونه رسیدل"
+
+    asyncio.run(run())
+
+
+def test_crop_state_is_set_before_any_await():
+    """«بشپړول» که سمدلاسه ووهل شي، باید کرپ ولري — نه چې ضایع شي."""
+    import asyncio
+    from modules import commands
+
+    state = _state()
+    seen = {}
+
+    class _Q(_SlowQuery):
+        async def answer(self, text=None, show_alert=False):
+            # دا لومړی `await` دی — تر دې مخکې حالت باید ثبت وي.
+            seen["at_first_await"] = state.smart_crop
+            await super().answer(text, show_alert)
+
+    class _Upd:
+        callback_query = _Q("crop:on")
+
+    asyncio.run(commands.on_callback(_Upd(), _callback_ctx(state)))
+    assert seen["at_first_await"] is True
+
+
+def test_repeated_crop_tap_keeps_it_on():
+    """⚠️ کارونکی چې ✅ ونه ویني، بیا یې وهي — دویم کلیک دې یې بند نکړي."""
+    import asyncio
+    from modules import commands
+
+    state = _state()
+
+    class _Upd:
+        callback_query = _SlowQuery("crop:on", edit_delay=0.0)
+
+    for _ in range(3):
+        asyncio.run(commands.on_callback(_Upd(), _callback_ctx(state)))
+        assert state.smart_crop is True
+    # صریح «اصلي» یې بندوي.
+    class _Off:
+        callback_query = _SlowQuery("crop:off", edit_delay=0.0)
+    asyncio.run(commands.on_callback(_Off(), _callback_ctx(state)))
+    assert state.smart_crop is False
+
+
+def test_answer_toast_names_the_chosen_mode():
+    """توست سمدلاسه ښکاري — نو کارونکی د ✅ انتظار ته اړ نه دی."""
+    import asyncio
+    from modules import commands
+
+    state = _state()
+    on = _SlowQuery("crop:on", edit_delay=0.0)
+    off = _SlowQuery("crop:off", edit_delay=0.0)
+    for q in (on, off):
+        class _U:
+            callback_query = q
+        asyncio.run(commands.on_callback(_U(), _callback_ctx(state)))
+    assert "کرپ" in on.answered and "هو" in on.answered
+    assert "اصلي" in off.answered
+
+
+def test_progress_title_shows_the_crop_decision():
+    """د پروسس سرلیک کرپ ښیي — کارونکی سمدلاسه ویني چې څه ولګېد."""
+    src = Path("modules/commands.py").read_text(encoding="utf-8")
+    assert '"📰 خبر · ✂️ کرپ" if crop_on else "📰 خبر"' in src
+    # او ډیزاین باید **عین** هغه ارزښت وکاروي چې سرلیک ښودلی.
+    assert 'data["smart_crop"] = crop_on' in src
